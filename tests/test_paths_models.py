@@ -1,6 +1,16 @@
+import json
 from pathlib import Path
 
-from fixsub.models import AudioStream, RunOptions, SubtitleCandidate
+import pytest
+
+from fixsub.models import (
+    AlignmentScore,
+    AudioStream,
+    CandidateDecision,
+    RunOptions,
+    SubtitleCandidate,
+    SyncResult,
+)
 from fixsub.paths import create_workdirs
 
 
@@ -55,6 +65,18 @@ def test_audio_stream_displays_non_surround_channel_count() -> None:
     assert "5.1" not in stream.display_name
 
 
+def test_audio_stream_displays_undetermined_language_as_unknown() -> None:
+    stream = AudioStream(
+        container_index=4,
+        audio_index=3,
+        codec="aac",
+        language="und",
+        channels=2,
+    )
+
+    assert "unknown language" in stream.display_name
+
+
 def test_candidate_serialization_uses_strings_for_paths(tmp_path: Path) -> None:
     candidate = SubtitleCandidate(
         candidate_id="assrt_001",
@@ -69,9 +91,54 @@ def test_candidate_serialization_uses_strings_for_paths(tmp_path: Path) -> None:
     assert candidate.to_json()["subtitle_path"].endswith("movie.ass")
 
 
+def test_candidate_decision_serialization_converts_nested_paths(tmp_path: Path) -> None:
+    candidate = SubtitleCandidate(
+        candidate_id="assrt_001",
+        provider="assrt",
+        source_title="Movie 1992",
+        subtitle_path=tmp_path / "movie.ass",
+        language="bilingual",
+        format="ass",
+        pre_score=12.5,
+    )
+    sync_result = SyncResult(
+        attempted=True,
+        succeeded=True,
+        output_path=tmp_path / "movie.synced.ass",
+    )
+    decision = CandidateDecision(
+        candidate=candidate,
+        original_score=AlignmentScore(score=71.0, reasons=["baseline"]),
+        synced_score=AlignmentScore(score=96.5, reasons=["aligned"]),
+        sync_result=sync_result,
+        selected_version="synced",
+        selected_path=tmp_path / "movie.synced.ass",
+        selected_score=96.5,
+        is_poor=False,
+        decision_reason="synced score improved",
+    )
+
+    data = decision.to_json()
+
+    json.dumps(data)
+    assert data["candidate"]["subtitle_path"].endswith("movie.ass")
+    assert data["sync_result"]["output_path"].endswith("movie.synced.ass")
+    assert data["selected_path"].endswith("movie.synced.ass")
+
+
 def test_run_options_defaults() -> None:
     options = RunOptions()
 
     assert options.max_candidates == 5
     assert options.lang == "zh-Hans"
-    assert options.providers == ["assrt"]
+    assert options.providers == ("assrt",)
+    assert options.to_json()["providers"] == ["assrt"]
+
+
+def test_run_options_providers_are_immutable_tuple_like() -> None:
+    options = RunOptions()
+
+    assert isinstance(options.providers, tuple)
+    assert options.providers == ("assrt",)
+    with pytest.raises(AttributeError):
+        options.providers.append("opensubtitles")

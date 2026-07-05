@@ -15,6 +15,17 @@ def _path_to_str(value: Any) -> Any:
     return value
 
 
+def _json_ready(value: Any) -> Any:
+    value = _path_to_str(value)
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    return value
+
+
 @dataclass(frozen=True)
 class RunOptions:
     dry_run: bool = False
@@ -22,11 +33,11 @@ class RunOptions:
     no_sync: bool = False
     max_candidates: int = 5
     lang: str = "zh-Hans"
-    providers: list[str] = field(default_factory=lambda: ["assrt"])
+    providers: tuple[str, ...] = ("assrt",)
     debug: bool = False
 
     def to_json(self) -> dict[str, Any]:
-        return asdict(self)
+        return _json_ready(asdict(self))
 
 
 @dataclass(frozen=True)
@@ -72,7 +83,7 @@ class AudioStream:
 
     @property
     def display_name(self) -> str:
-        language_name = {"eng": "English", "en": "English"}.get(
+        language_name = {"eng": "English", "en": "English", "und": "unknown language"}.get(
             (self.language or "").lower(),
             self.language or "unknown language",
         )
