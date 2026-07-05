@@ -8,6 +8,10 @@ from fixsub.models import MovieInfo
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".m4v", ".avi", ".mov"}
 SOURCE_PATTERNS = ["WEB-DL", "WEBRip", "BluRay", "BDRip", "HDTV", "DVDRip"]
+SOURCE_ALIASES = [
+    ("WEB-DL", re.compile(r"\bWEB[-. ]DL\b", re.IGNORECASE)),
+    *[(source, re.compile(source, re.IGNORECASE)) for source in SOURCE_PATTERNS if source != "WEB-DL"],
+]
 
 
 def detect_video(directory: Path) -> Path:
@@ -29,10 +33,14 @@ def parse_movie_info(video_path: Path) -> MovieInfo:
         title = spaced[: year_match.start()].strip() or None
     resolution_match = re.search(r"\b(480p|576p|720p|1080p|2160p|4K)\b", spaced, re.IGNORECASE)
     resolution = resolution_match.group(1) if resolution_match else None
-    source = next((source for source in SOURCE_PATTERNS if re.search(source, stem, re.IGNORECASE)), None)
+    source = next((source for source, pattern in SOURCE_ALIASES if pattern.search(stem)), None)
     release_group = None
     if "-" in stem:
-        release_group = stem.rsplit("-", 1)[-1] or None
+        release_prefix, release_suffix = stem.rsplit("-", 1)
+        prefix_token = re.split(r"[. _]", release_prefix)[-1]
+        hyphenated_tail = f"{prefix_token}-{release_suffix}"
+        if not any(pattern.fullmatch(hyphenated_tail) for _, pattern in SOURCE_ALIASES):
+            release_group = release_suffix or None
     return MovieInfo(
         path=video_path,
         stem=stem,

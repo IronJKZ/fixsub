@@ -38,6 +38,21 @@ def test_parse_movie_info_from_release_name() -> None:
     assert info.release_group == "GROUP"
 
 
+def test_parse_movie_info_does_not_treat_source_hyphen_as_release_group() -> None:
+    info = parse_movie_info(Path("Movie.1992.1080p.WEB-DL.mkv"))
+
+    assert info.source == "WEB-DL"
+    assert info.release_group is None
+
+
+def test_parse_movie_info_normalizes_web_dl_source_separator() -> None:
+    dotted = parse_movie_info(Path("Movie.1992.1080p.WEB.DL.mkv"))
+    spaced = parse_movie_info(Path("Movie.1992.1080p.WEB DL.mkv"))
+
+    assert dotted.source == "WEB-DL"
+    assert spaced.source == "WEB-DL"
+
+
 def test_generate_search_queries_prefers_original_stem() -> None:
     info = parse_movie_info(Path("Unforgiven.1992.1080p.WEB-DL.ENG.DD5.1.H264-GROUP.mkv"))
 
