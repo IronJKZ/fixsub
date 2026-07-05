@@ -10,6 +10,10 @@ def _contains(text: str, value: str | None) -> bool:
     return bool(value) and value.lower() in text.lower()
 
 
+def _years(text: str) -> set[str]:
+    return set(re.findall(r"\b(19\d{2}|20\d{2})\b", text))
+
+
 def score_search_result(result: SearchResult, movie: MovieInfo) -> SearchResult:
     haystack = " ".join([result.title, result.raw.get("videoname", "")]).lower()
     score = 0.0
@@ -33,7 +37,10 @@ def score_search_result(result: SearchResult, movie: MovieInfo) -> SearchResult:
         score += 2
     if re.search(r"\bS\d{1,2}E\d{1,2}\b", haystack, re.IGNORECASE):
         score -= 20
-    if movie.year and re.search(r"\b(19\d{2}|20\d{2})\b", haystack) and movie.year not in haystack:
+    years = _years(haystack)
+    if movie.year and years and movie.year not in years:
+        score -= 12
+    elif movie.year and any(year != movie.year for year in years):
         score -= 12
     return replace(result, pre_score=score)
 

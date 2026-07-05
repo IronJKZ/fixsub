@@ -21,6 +21,37 @@ def test_parse_search_response_extracts_results() -> None:
     assert results[0].download_url is not None
 
 
+def test_parse_search_response_ignores_missing_or_malformed_shapes() -> None:
+    assert parse_search_response({"sub": None}) == []
+
+    results = parse_search_response({"sub": {"subs": ["bad", {"id": "3", "native_name": "Ok.zh.srt"}]}})
+
+    assert [result.result_id for result in results] == ["3"]
+    assert results[0].title == "Ok.zh.srt"
+    assert results[0].format == "srt"
+
+
+def test_parse_search_response_detects_format_from_tokens_and_extensions() -> None:
+    payload = {
+        "sub": {
+            "subs": [
+                {"id": "1", "native_name": "class notes"},
+                {"id": "2", "native_name": "srtipped"},
+                {"id": "3", "native_name": "movie.ass"},
+                {"id": "4", "native_name": "movie.ssa"},
+                {"id": "5", "native_name": "movie.srt"},
+                {"id": "6", "native_name": "movie", "subtype": "ass"},
+                {"id": "7", "native_name": "movie", "subtype": "ssa"},
+                {"id": "8", "native_name": "movie", "subtype": "srt"},
+            ]
+        }
+    }
+
+    results = parse_search_response(payload)
+
+    assert [result.format for result in results] == [None, None, "ass", "ssa", "srt", "ass", "ssa", "srt"]
+
+
 def test_search_result_scoring_prefers_matching_chinese_ass() -> None:
     payload = json.loads(Path("tests/fixtures/assrt_search.json").read_text(encoding="utf-8"))
     info = MovieInfo(
@@ -37,6 +68,26 @@ def test_search_result_scoring_prefers_matching_chinese_ass() -> None:
     scored = [score_search_result(result, info) for result in results]
 
     assert scored[0].pre_score > scored[1].pre_score
+
+
+def test_search_result_scoring_penalizes_conflicting_year() -> None:
+    info = MovieInfo(
+        path=Path("Unforgiven.1992.1080p.WEB-DL-GROUP.mkv"),
+        stem="Unforgiven.1992.1080p.WEB-DL-GROUP",
+        title="Unforgiven",
+        year="1992",
+        source="WEB-DL",
+        resolution="1080p",
+        release_group="GROUP",
+    )
+    clean = parse_search_response(
+        {"sub": {"subs": [{"id": "1", "native_name": "Unforgiven.1992.1080p.WEB-DL-GROUP.ass"}]}}
+    )[0]
+    conflicting = parse_search_response(
+        {"sub": {"subs": [{"id": "2", "native_name": "Unforgiven.1992.2013.1080p.WEB-DL-GROUP.ass"}]}}
+    )[0]
+
+    assert score_search_result(conflicting, info).pre_score < score_search_result(clean, info).pre_score
 
 
 def test_client_requires_token() -> None:
@@ -56,3 +107,21 @@ def test_client_search_uses_token_and_query() -> None:
     results = client.search("Unforgiven")
 
     assert results[0].result_id == "1001"
+
+
+def test_client_download_sanitizes_result_id_and_creates_target_dir(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"subtitle")
+
+    target_dir = tmp_path / "nested"
+    client = AssrtClient(token="secret-token", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    downloaded = client.download(
+        result=parse_search_response({"sub": {"subs": [{"id": "../../x", "native_name": "movie.srt"}]}})[0],
+        target_dir=target_dir,
+    )
+
+    assert downloaded.path.parent == target_dir
+    assert downloaded.path.name == "assrt_x.srt"
+    assert downloaded.path.read_bytes() == b"subtitle"
+    assert not (tmp_path / "x.srt").exists()

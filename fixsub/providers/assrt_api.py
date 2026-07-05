@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from pathlib import PurePath
 from typing import Any
 
 import httpx
@@ -29,18 +31,42 @@ def _detect_language(item: dict[str, Any]) -> str | None:
 
 
 def _detect_format(item: dict[str, Any]) -> str | None:
-    text = " ".join(str(part) for part in [item.get("subtype"), item.get("native_name"), item.get("filename")] if part)
-    lowered = text.lower()
-    for ext in ("ass", "ssa", "srt"):
-        if ext in lowered:
-            return ext
+    subtype = item.get("subtype")
+    if isinstance(subtype, str) and subtype.lower() in {"ass", "ssa", "srt"}:
+        return subtype.lower()
+    text = " ".join(str(part) for part in [item.get("native_name"), item.get("filename")] if part)
+    match = re.search(r"\.(ass|ssa|srt)(?:$|[?#])", text, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+    return None
+
+
+def _sanitize_result_id(result_id: str) -> str:
+    name = PurePath(result_id).name
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._")
+    return sanitized or "subtitle"
+
+
+def _iter_sub_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    sub = payload.get("sub")
+    if not isinstance(sub, dict):
+        return []
+    subs = sub.get("subs")
+    if not isinstance(subs, list):
+        return []
+    return [item for item in subs if isinstance(item, dict)]
+
+
+def _detail_url(item: dict[str, Any]) -> str | None:
+    detail_url = item.get("detail_url") or item.get("detailUrl")
+    if detail_url:
+        return str(detail_url)
     return None
 
 
 def parse_search_response(payload: dict[str, Any]) -> list[SearchResult]:
-    raw_items = payload.get("sub", {}).get("subs", [])
     results: list[SearchResult] = []
-    for item in raw_items:
+    for item in _iter_sub_items(payload):
         result_id = str(item.get("id") or item.get("subid") or "")
         title = str(item.get("native_name") or item.get("videoname") or result_id)
         if not result_id or not title:
@@ -52,7 +78,7 @@ def parse_search_response(payload: dict[str, Any]) -> list[SearchResult]:
                 result_id=result_id,
                 title=title,
                 download_url=str(download_url) if download_url else None,
-                detail_url=f"{ASSRT_API_BASE}/sub/detail",
+                detail_url=_detail_url(item),
                 language=_detect_language(item),
                 format=_detect_format(item),
                 raw=item,
@@ -82,6 +108,8 @@ class AssrtClient:
         response = self.http_client.get(url, params=params)
         response.raise_for_status()
         suffix = "." + (result.format or "bin")
-        target_path = target_dir / f"assrt_{result.result_id}{suffix}"
+        safe_id = _sanitize_result_id(result.result_id)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"assrt_{safe_id}{suffix}"
         target_path.write_bytes(response.content)
-        return DownloadedFile(candidate_id=f"assrt_{result.result_id}", provider="assrt", path=target_path, source_url=url)
+        return DownloadedFile(candidate_id=f"assrt_{safe_id}", provider="assrt", path=target_path, source_url=url)
