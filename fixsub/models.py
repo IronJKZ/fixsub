@@ -39,6 +39,9 @@ class WorkDirs:
     logs: Path
     metadata: Path
 
+    def to_json(self) -> dict[str, Any]:
+        return _path_to_str(asdict(self))
+
 
 @dataclass(frozen=True)
 class MovieInfo:
@@ -74,7 +77,7 @@ class AudioStream:
             self.language or "unknown language",
         )
         codec_name = (self.codec or "unknown codec").upper()
-        if self.channels and self.channels >= 6:
+        if self.channels == 6:
             channel_name = "5.1"
         elif self.channels == 2:
             channel_name = "stereo"

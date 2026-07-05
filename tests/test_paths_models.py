@@ -16,6 +16,13 @@ def test_create_workdirs_creates_expected_tree(tmp_path: Path) -> None:
     assert workdirs.metadata.is_dir()
 
 
+def test_workdirs_serialization_uses_strings_for_paths(tmp_path: Path) -> None:
+    root = create_workdirs(tmp_path).to_json()["root"]
+
+    assert isinstance(root, str)
+    assert root.endswith(".fixsub")
+
+
 def test_audio_stream_maps_to_ffsubsync_id() -> None:
     stream = AudioStream(
         container_index=2,
@@ -31,6 +38,21 @@ def test_audio_stream_maps_to_ffsubsync_id() -> None:
     assert "AC3" in stream.display_name
     assert "5.1" in stream.display_name
     assert "default" in stream.display_name
+
+
+def test_audio_stream_displays_non_surround_channel_count() -> None:
+    stream = AudioStream(
+        container_index=3,
+        audio_index=2,
+        codec="dts",
+        language="eng",
+        channels=8,
+    )
+
+    assert "English" in stream.display_name
+    assert "DTS" in stream.display_name
+    assert "8ch" in stream.display_name
+    assert "5.1" not in stream.display_name
 
 
 def test_candidate_serialization_uses_strings_for_paths(tmp_path: Path) -> None:
