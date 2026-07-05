@@ -1,0 +1,28 @@
+{
+  "status": 0,
+  "sub": {
+    "subs": [
+      {
+        "id": "1001",
+        "native_name": "Unforgiven 1992 WEB-DL bilingual.ass",
+        "videoname": "Unforgiven.1992.1080p.WEB-DL-GROUP",
+        "lang": {
+          "desc": "简英双语"
+        },
+        "revision": 2,
+        "subtype": "ass",
+        "download_url": "https://api.assrt.net/v1/sub/download/1001"
+      },
+      {
+        "id": "1002",
+        "native_name": "Wrong Movie 2001.srt",
+        "videoname": "Wrong.Movie.2001.BluRay",
+        "lang": {
+          "desc": "英文"
+        },
+        "subtype": "srt",
+        "download_url": "https://api.assrt.net/v1/sub/download/1002"
+      }
+    ]
+  }
+}
