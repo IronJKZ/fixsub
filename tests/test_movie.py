@@ -1,0 +1,48 @@
+from pathlib import Path
+
+import pytest
+
+from fixsub.errors import NoVideoFoundError
+from fixsub.movie import detect_video, generate_search_queries, parse_movie_info
+
+
+def test_detect_video_chooses_only_video(tmp_path: Path) -> None:
+    video = tmp_path / "Movie.1992.1080p.WEB-DL.mkv"
+    video.write_bytes(b"x")
+    (tmp_path / "notes.txt").write_text("ignore", encoding="utf-8")
+
+    assert detect_video(tmp_path) == video
+
+
+def test_detect_video_chooses_largest_when_multiple(tmp_path: Path) -> None:
+    small = tmp_path / "sample.mp4"
+    large = tmp_path / "Feature.1992.BluRay.mkv"
+    small.write_bytes(b"x")
+    large.write_bytes(b"x" * 10)
+
+    assert detect_video(tmp_path) == large
+
+
+def test_detect_video_raises_when_missing(tmp_path: Path) -> None:
+    with pytest.raises(NoVideoFoundError):
+        detect_video(tmp_path)
+
+
+def test_parse_movie_info_from_release_name() -> None:
+    info = parse_movie_info(Path("Unforgiven.1992.1080p.WEB-DL.ENG.DD5.1.H264-GROUP.mkv"))
+
+    assert info.title == "Unforgiven"
+    assert info.year == "1992"
+    assert info.resolution == "1080p"
+    assert info.source == "WEB-DL"
+    assert info.release_group == "GROUP"
+
+
+def test_generate_search_queries_prefers_original_stem() -> None:
+    info = parse_movie_info(Path("Unforgiven.1992.1080p.WEB-DL.ENG.DD5.1.H264-GROUP.mkv"))
+
+    assert generate_search_queries(info) == [
+        "Unforgiven.1992.1080p.WEB-DL.ENG.DD5.1.H264-GROUP",
+        "Unforgiven 1992 WEB-DL",
+        "Unforgiven 1992",
+    ]
