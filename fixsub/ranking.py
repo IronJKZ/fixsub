@@ -15,7 +15,7 @@ def _years(text: str) -> set[str]:
 
 
 def score_search_result(result: SearchResult, movie: MovieInfo) -> SearchResult:
-    haystack = " ".join([result.title, result.raw.get("videoname", "")]).lower()
+    haystack = " ".join([result.title, str(result.raw.get("videoname") or "")]).lower()
     score = 0.0
     if result.language in {"bilingual", "zh-Hans", "zh-Hant", "zh"}:
         score += 30

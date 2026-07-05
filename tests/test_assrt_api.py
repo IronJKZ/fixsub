@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from fixsub.models import MovieInfo
+from fixsub.models import MovieInfo, SearchResult
 from fixsub.providers.assrt_api import AssrtClient, parse_search_response
 from fixsub.ranking import score_search_result
 
@@ -88,6 +88,30 @@ def test_search_result_scoring_penalizes_conflicting_year() -> None:
     )[0]
 
     assert score_search_result(conflicting, info).pre_score < score_search_result(clean, info).pre_score
+
+
+def test_search_result_scoring_handles_non_string_raw_videoname() -> None:
+    info = MovieInfo(
+        path=Path("Unforgiven.1992.1080p.WEB-DL-GROUP.mkv"),
+        stem="Unforgiven.1992.1080p.WEB-DL-GROUP",
+        title="Unforgiven",
+        year="1992",
+        source="WEB-DL",
+        resolution="1080p",
+        release_group="GROUP",
+    )
+    result = SearchResult(
+        provider="assrt",
+        result_id="1",
+        title="Unforgiven.1992.ass",
+        format="ass",
+        raw={"videoname": 123},
+    )
+
+    scored = score_search_result(result, info)
+
+    assert isinstance(scored, SearchResult)
+    assert isinstance(scored.pre_score, float)
 
 
 def test_client_requires_token() -> None:
