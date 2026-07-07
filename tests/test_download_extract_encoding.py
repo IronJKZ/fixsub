@@ -22,6 +22,14 @@ def test_safe_download_name_sanitizes_candidate_id() -> None:
     assert ".." not in name
 
 
+def test_safe_download_name_sanitizes_windows_path_candidate_id() -> None:
+    name = safe_download_name(r"C:\tmp\assrt_001", "Movie.ass")
+
+    assert name == "assrt_001.ass"
+    assert "\\" not in name
+    assert ":" not in name
+
+
 def test_extract_zip_collects_subtitles_only(tmp_path: Path) -> None:
     archive = tmp_path / "subs.zip"
     out_dir = tmp_path / "out"
@@ -120,16 +128,47 @@ def test_extract_rar_may_use_unrar(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     def fake_run(command: list[str], **_: object) -> None:
         commands.append(command)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "movie.srt").write_text("subtitle", encoding="utf-8")
+        extract_dir = Path(command[-1])
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        (extract_dir / "movie.srt").write_text("subtitle", encoding="utf-8")
 
     monkeypatch.setattr("fixsub.extract.shutil.which", fake_which)
     monkeypatch.setattr("fixsub.extract.subprocess.run", fake_run)
 
     extracted = extract_archive(archive, out_dir)
 
-    assert commands == [["/usr/bin/unrar", "x", str(archive), str(out_dir)]]
+    assert commands[0][:3] == ["/usr/bin/unrar", "x", str(archive)]
     assert extracted == [out_dir / "movie.srt"]
+
+
+def test_extract_rar_returns_current_file_when_existing_name_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "subs.rar"
+    out_dir = tmp_path / "out"
+    archive.write_bytes(b"archive")
+    out_dir.mkdir()
+    existing = out_dir / "movie.srt"
+    existing.write_text("old", encoding="utf-8")
+
+    def fake_which(command: str) -> str | None:
+        if command == "unrar":
+            return "/usr/bin/unrar"
+        return None
+
+    def fake_run(command: list[str], **_: object) -> None:
+        extract_dir = Path(command[-1])
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        (extract_dir / "movie.srt").write_text("new", encoding="utf-8")
+
+    monkeypatch.setattr("fixsub.extract.shutil.which", fake_which)
+    monkeypatch.setattr("fixsub.extract.subprocess.run", fake_run)
+
+    extracted = extract_archive(archive, out_dir)
+
+    assert extracted == [out_dir / "movie.1.srt"]
+    assert existing.read_text(encoding="utf-8") == "old"
+    assert (out_dir / "movie.1.srt").read_text(encoding="utf-8") == "new"
 
 
 def test_collect_subtitle_files_finds_supported_extensions(tmp_path: Path) -> None:
@@ -160,10 +199,32 @@ def test_normalize_to_utf8_handles_utf16_bom(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == "字幕"
 
 
+def test_normalize_to_utf8_wraps_malformed_bom_decode_error(tmp_path: Path) -> None:
+    source = tmp_path / "malformed.srt"
+    target = tmp_path / "candidate.srt"
+    source.write_bytes(b"\xff\xfe\x00")
+
+    with pytest.raises(SubtitleEncodingError):
+        normalize_to_utf8(source, target)
+
+    assert not target.exists()
+
+
 def test_normalize_to_utf8_rejects_binary_bytes(tmp_path: Path) -> None:
     source = tmp_path / "binary.srt"
     target = tmp_path / "candidate.srt"
     source.write_bytes(b"\x00\xff\x00\xff\x00\xff")
+
+    with pytest.raises(SubtitleEncodingError):
+        normalize_to_utf8(source, target)
+
+    assert not target.exists()
+
+
+def test_normalize_to_utf8_rejects_binary_bytes_without_nuls(tmp_path: Path) -> None:
+    source = tmp_path / "image.srt"
+    target = tmp_path / "candidate.srt"
+    source.write_bytes(b"\xff\xd8\xff\xe0JFIF\x01\x02\x03\xff\xd9")
 
     with pytest.raises(SubtitleEncodingError):
         normalize_to_utf8(source, target)

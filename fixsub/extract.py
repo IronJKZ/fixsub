@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from posixpath import normpath
 from zipfile import ZipFile
@@ -60,6 +61,15 @@ def _extract_zip(archive_path: Path, output_dir: Path) -> list[Path]:
     return sorted(extracted_subtitles)
 
 
+def _copy_current_subtitle_files(source_dir: Path, output_dir: Path) -> list[Path]:
+    copied: list[Path] = []
+    for subtitle in collect_subtitle_files(source_dir):
+        target = _collision_safe_path(output_dir / subtitle.name)
+        shutil.copy2(subtitle, target)
+        copied.append(target)
+    return sorted(copied)
+
+
 def extract_archive(archive_path: Path, output_dir: Path) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     suffix = archive_path.suffix.lower()
@@ -71,16 +81,17 @@ def extract_archive(archive_path: Path, output_dir: Path) -> list[Path]:
         return []
     if suffix == ".zip":
         return _extract_zip(archive_path, output_dir)
-    before = set(collect_subtitle_files(output_dir))
     if suffix == ".7z":
         tool = shutil.which("unar")
     else:
         tool = shutil.which("unar") or shutil.which("unrar")
     if not tool:
         raise MissingDependencyError("unar", "brew install unar")
-    if Path(tool).name == "unar":
-        command = [tool, "-o", str(output_dir), str(archive_path)]
-    else:
-        command = [tool, "x", str(archive_path), str(output_dir)]
-    subprocess.run(command, check=True, capture_output=True, text=True)
-    return sorted(path for path in collect_subtitle_files(output_dir) if path not in before)
+    with tempfile.TemporaryDirectory(dir=output_dir) as extract_dir_name:
+        extract_dir = Path(extract_dir_name)
+        if Path(tool).name == "unar":
+            command = [tool, "-o", str(extract_dir), str(archive_path)]
+        else:
+            command = [tool, "x", str(archive_path), str(extract_dir)]
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        return _copy_current_subtitle_files(extract_dir, output_dir)
