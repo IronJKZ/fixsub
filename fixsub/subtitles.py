@@ -30,5 +30,8 @@ def parse_subtitle_intervals(path: Path) -> list[tuple[float, float]]:
                 continue
             parts = line.split(",", 9)
             if len(parts) >= 3:
-                intervals.append((_parse_ass_time(parts[1]), _parse_ass_time(parts[2])))
+                try:
+                    intervals.append((_parse_ass_time(parts[1]), _parse_ass_time(parts[2])))
+                except ValueError:
+                    continue
     return intervals
