@@ -51,3 +51,16 @@ def test_alignment_scores_out_of_video_subtitle_low(tmp_path: Path) -> None:
 
     assert score.score < 0.5
     assert any("outside video" in reason for reason in score.reasons)
+
+
+def test_alignment_scores_all_invalid_intervals_low(tmp_path: Path) -> None:
+    subtitle = tmp_path / "invalid.srt"
+    subtitle.write_text(
+        "1\n00:00:10,000 --> 00:00:05,000\nBackwards\n",
+        encoding="utf-8",
+    )
+
+    score = score_alignment(subtitle, duration_seconds=7200)
+
+    assert score.score < 0.5
+    assert any("invalid subtitle timing intervals" in reason for reason in score.reasons)

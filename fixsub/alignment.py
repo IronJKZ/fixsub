@@ -19,6 +19,8 @@ def score_alignment(subtitle_path: Path, duration_seconds: float | None) -> Alig
     valid_rate = len(valid_intervals) / len(intervals)
     if valid_rate < 1.0:
         reasons.append("invalid subtitle timing intervals")
+    if not valid_intervals:
+        return AlignmentScore(score=0.0, reasons=reasons)
     if not duration_seconds or duration_seconds <= 0:
         return AlignmentScore(score=_clamp(0.4 + 0.5 * valid_rate), reasons=reasons + ["video duration unavailable"])
     outside_count = sum(1 for start, end in valid_intervals if start > duration_seconds or end > duration_seconds + 30)
