@@ -7,8 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fixsub.errors import MissingDependencyError
+from fixsub.errors import FixsubError, MissingDependencyError
 from fixsub.models import AudioStream
+
+
+class ProbeError(FixsubError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -18,16 +22,30 @@ class ProbeResult:
     raw: dict[str, Any]
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _parse_duration(duration_text: Any) -> float | None:
+    if not duration_text:
+        return None
+    try:
+        return float(duration_text)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_ffprobe_json(payload: dict[str, Any]) -> ProbeResult:
-    duration_text = payload.get("format", {}).get("duration")
-    duration_seconds = float(duration_text) if duration_text else None
+    duration_seconds = _parse_duration(_as_dict(payload.get("format")).get("duration"))
     audio_streams: list[AudioStream] = []
     audio_index = 0
     for stream in payload.get("streams", []):
+        if not isinstance(stream, dict):
+            continue
         if stream.get("codec_type") != "audio":
             continue
-        tags = stream.get("tags", {}) or {}
-        disposition = stream.get("disposition", {}) or {}
+        tags = _as_dict(stream.get("tags"))
+        disposition = _as_dict(stream.get("disposition"))
         audio_streams.append(
             AudioStream(
                 container_index=int(stream.get("index", audio_index)),
@@ -70,5 +88,13 @@ def probe_video(video_path: Path) -> ProbeResult:
         "-show_streams",
         str(video_path),
     ]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
-    return parse_ffprobe_json(json.loads(result.stdout))
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as error:
+        details = error.stderr.strip() if error.stderr else "ffprobe returned a non-zero exit status"
+        raise ProbeError(f"ffprobe failed for {video_path}: {details}") from error
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ProbeError(f"ffprobe returned invalid JSON for {video_path}") from error
+    return parse_ffprobe_json(payload)
