@@ -16,6 +16,10 @@ class ProviderConfigError(FixsubError):
     pass
 
 
+class SubtitleEncodingError(FixsubError):
+    pass
+
+
 class NoVideoFoundError(FixsubError):
     pass
 
