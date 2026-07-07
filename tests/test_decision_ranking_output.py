@@ -50,6 +50,25 @@ def test_decision_selects_synced_when_materially_better(tmp_path: Path) -> None:
     assert decision.is_poor is False
 
 
+def test_decision_keeps_original_when_synced_output_is_missing(tmp_path: Path) -> None:
+    candidate = make_candidate(tmp_path)
+
+    decision = decide_candidate_version(
+        candidate=candidate,
+        original_score=AlignmentScore(0.40, []),
+        sync_result=SyncResult(
+            attempted=True,
+            succeeded=True,
+            output_path=tmp_path / "missing.synced.ass",
+        ),
+        synced_score=AlignmentScore(0.95, []),
+    )
+
+    assert decision.selected_version == "original"
+    assert decision.selected_path == candidate.subtitle_path
+    assert decision.decision_reason != "Synced score improved by 0.55."
+
+
 def test_decision_keeps_original_when_synced_is_not_better(tmp_path: Path) -> None:
     candidate = make_candidate(tmp_path)
     synced = tmp_path / "candidate.synced.ass"

@@ -22,6 +22,7 @@ def decide_candidate_version(
         sync_result.succeeded
         and synced_score
         and sync_result.output_path
+        and sync_result.output_path.exists()
         and synced_score.score >= original_score.score + SYNC_IMPROVEMENT_THRESHOLD
     ):
         selected_version = "synced"
