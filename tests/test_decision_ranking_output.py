@@ -1,7 +1,11 @@
 from pathlib import Path
+import json
 
 from fixsub.decision import decide_candidate_version
+from fixsub.logging_utils import append_log, write_results_json
 from fixsub.models import AlignmentScore, SubtitleCandidate, SyncResult
+from fixsub.output import final_subtitle_path, write_final_subtitle
+from fixsub.ranking import rank_decisions
 
 
 def make_candidate(tmp_path: Path) -> SubtitleCandidate:
@@ -150,3 +154,87 @@ def test_decision_marks_sync_failure_with_low_original_poor(tmp_path: Path) -> N
     assert decision.selected_version == "original"
     assert decision.is_poor is True
     assert decision.decision_reason == "Sync failed; original candidate kept."
+
+
+def test_final_subtitle_path_adds_language_before_subtitle_extension(tmp_path: Path) -> None:
+    video = tmp_path / "Movie.1992.1080p.WEB-DL.mkv"
+
+    assert final_subtitle_path(video, "zh-Hans", ".ass") == tmp_path / "Movie.1992.1080p.WEB-DL.zh-Hans.ass"
+
+
+def test_write_final_subtitle_backs_up_existing_file_and_writes_selected(tmp_path: Path) -> None:
+    video = tmp_path / "Movie.mkv"
+    selected = tmp_path / "selected.ass"
+    selected.write_text("selected subtitle\n", encoding="utf-8")
+    final_path = tmp_path / "Movie.zh-Hans.ass"
+    final_path.write_text("existing subtitle\n", encoding="utf-8")
+
+    written_path = write_final_subtitle(
+        selected_subtitle=selected,
+        video_path=video,
+        lang="zh-Hans",
+        backup_dir=tmp_path / ".fixsub" / "original",
+    )
+
+    backups = list((tmp_path / ".fixsub" / "original").glob("*.Movie.zh-Hans.ass"))
+    assert written_path == final_path
+    assert final_path.read_text(encoding="utf-8") == "selected subtitle\n"
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "existing subtitle\n"
+
+
+def test_rank_decisions_prefers_non_poor_high_score_over_poor_higher_pre_score(tmp_path: Path) -> None:
+    good_candidate = make_candidate(tmp_path)
+    poor_candidate = SubtitleCandidate(
+        candidate_id="assrt_002",
+        provider="assrt",
+        source_title="Unforgiven",
+        subtitle_path=tmp_path / "poor.ass",
+        language="bilingual",
+        format="ass",
+        pre_score=99,
+    )
+    poor_candidate.subtitle_path.write_text("[Events]\n", encoding="utf-8")
+    good_decision = decide_candidate_version(
+        candidate=good_candidate,
+        original_score=AlignmentScore(0.70, []),
+        sync_result=SyncResult(attempted=False, succeeded=False),
+        synced_score=None,
+    )
+    poor_decision = decide_candidate_version(
+        candidate=poor_candidate,
+        original_score=AlignmentScore(0.40, []),
+        sync_result=SyncResult(attempted=False, succeeded=False),
+        synced_score=None,
+    )
+
+    assert rank_decisions([poor_decision, good_decision]) == [good_decision, poor_decision]
+
+
+def test_write_results_json_serializes_paths_to_strings(tmp_path: Path) -> None:
+    target = tmp_path / "metadata" / "result.json"
+
+    written_path = write_results_json(
+        target,
+        {
+            "video": tmp_path / "Movie.mkv",
+            "outputs": [tmp_path / "Movie.zh-Hans.ass"],
+            "nested": {"backup": tmp_path / ".fixsub" / "original"},
+        },
+    )
+
+    assert written_path == target
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "video": str(tmp_path / "Movie.mkv"),
+        "outputs": [str(tmp_path / "Movie.zh-Hans.ass")],
+        "nested": {"backup": str(tmp_path / ".fixsub" / "original")},
+    }
+
+
+def test_append_log_creates_parent_and_appends_stripped_messages(tmp_path: Path) -> None:
+    log_path = tmp_path / "logs" / "fixsub.log"
+
+    append_log(log_path, "first\n")
+    append_log(log_path, "second")
+
+    assert log_path.read_text(encoding="utf-8") == "first\nsecond\n"
