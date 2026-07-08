@@ -27,7 +27,10 @@ def run_ffsubsync(video_path: Path, subtitle_path: Path, output_path: Path, audi
         "-o",
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+    except OSError as exc:
+        return SyncResult(attempted=True, succeeded=False, output_path=None, error=str(exc))
     if result.returncode != 0:
         return SyncResult(
             attempted=True,

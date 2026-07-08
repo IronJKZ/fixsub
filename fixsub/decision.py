@@ -13,18 +13,14 @@ def decide_candidate_version(
     sync_result: SyncResult,
     synced_score: AlignmentScore | None,
 ) -> CandidateDecision:
+    synced_output_exists = sync_result.output_path is not None and sync_result.output_path.exists()
+    synced_is_usable = sync_result.succeeded and synced_score is not None and synced_output_exists
     if original_score.score >= EXCELLENT_ALIGNMENT and not sync_result.attempted:
         selected_version = "original"
         selected_path = candidate.subtitle_path
         selected_score = original_score.score
         reason = "Original subtitle already aligned; sync skipped."
-    elif (
-        sync_result.succeeded
-        and synced_score
-        and sync_result.output_path
-        and sync_result.output_path.exists()
-        and synced_score.score >= original_score.score + SYNC_IMPROVEMENT_THRESHOLD
-    ):
+    elif synced_is_usable and synced_score.score >= original_score.score + SYNC_IMPROVEMENT_THRESHOLD:
         selected_version = "synced"
         selected_path = sync_result.output_path
         selected_score = synced_score.score
@@ -35,12 +31,16 @@ def decide_candidate_version(
         selected_score = original_score.score
         if sync_result.attempted and not sync_result.succeeded:
             reason = "Sync failed; original candidate kept."
+        elif sync_result.attempted and not synced_output_exists:
+            reason = "Synced output missing; original candidate kept."
+        elif sync_result.attempted and synced_score is None:
+            reason = "Synced score missing; original candidate kept."
         elif sync_result.attempted:
             reason = "Synced version did not improve alignment."
         else:
             reason = "Sync skipped; original candidate kept."
-    synced_value = synced_score.score if synced_score else None
-    is_poor = original_score.score < POOR_ALIGNMENT and (synced_value is None or synced_value < POOR_ALIGNMENT)
+    usable_score = synced_score.score if selected_version == "synced" and synced_score is not None else original_score.score
+    is_poor = usable_score < POOR_ALIGNMENT
     return CandidateDecision(
         candidate=candidate,
         original_score=original_score,
