@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 
+import fixsub.output as output
 from fixsub.decision import decide_candidate_version
 from fixsub.logging_utils import append_log, write_results_json
 from fixsub.models import AlignmentScore, SubtitleCandidate, SyncResult
@@ -181,6 +182,39 @@ def test_write_final_subtitle_backs_up_existing_file_and_writes_selected(tmp_pat
     assert final_path.read_text(encoding="utf-8") == "selected subtitle\n"
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "existing subtitle\n"
+
+
+def test_write_final_subtitle_preserves_backups_when_timestamp_collides(tmp_path: Path, monkeypatch) -> None:
+    class FixedDatetime:
+        @classmethod
+        def now(cls):
+            return cls()
+
+        def strftime(self, _format: str) -> str:
+            return "20260709010203000000"
+
+    monkeypatch.setattr(output, "datetime", FixedDatetime)
+    video = tmp_path / "Movie.mkv"
+    first_selected = tmp_path / "first-selected.ass"
+    second_selected = tmp_path / "second-selected.ass"
+    first_selected.write_text("first selected\n", encoding="utf-8")
+    second_selected.write_text("second selected\n", encoding="utf-8")
+    final_path = tmp_path / "Movie.zh-Hans.ass"
+    final_path.write_text("original subtitle\n", encoding="utf-8")
+    backup_dir = tmp_path / ".fixsub" / "original"
+
+    write_final_subtitle(first_selected, video, "zh-Hans", backup_dir)
+    write_final_subtitle(second_selected, video, "zh-Hans", backup_dir)
+
+    first_backup = backup_dir / "20260709010203000000.Movie.zh-Hans.ass"
+    second_backup = backup_dir / "20260709010203000000-1.Movie.zh-Hans.ass"
+    assert {backup.name for backup in backup_dir.glob("*.Movie.zh-Hans.ass")} == {
+        first_backup.name,
+        second_backup.name,
+    }
+    assert first_backup.read_text(encoding="utf-8") == "original subtitle\n"
+    assert second_backup.read_text(encoding="utf-8") == "first selected\n"
+    assert final_path.read_text(encoding="utf-8") == "second selected\n"
 
 
 def test_rank_decisions_prefers_non_poor_high_score_over_poor_higher_pre_score(tmp_path: Path) -> None:
