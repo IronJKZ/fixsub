@@ -15,7 +15,7 @@ def decide_candidate_version(
 ) -> CandidateDecision:
     synced_output_exists = sync_result.output_path is not None and sync_result.output_path.exists()
     synced_is_usable = sync_result.succeeded and synced_score is not None and synced_output_exists
-    if original_score.score >= EXCELLENT_ALIGNMENT and not sync_result.attempted:
+    if original_score.score >= EXCELLENT_ALIGNMENT:
         selected_version = "original"
         selected_path = candidate.subtitle_path
         selected_score = original_score.score

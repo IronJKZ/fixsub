@@ -33,6 +33,24 @@ def test_decision_skips_sync_when_original_is_excellent(tmp_path: Path) -> None:
     assert decision.decision_reason == "Original subtitle already aligned; sync skipped."
 
 
+def test_decision_keeps_excellent_original_even_if_synced_would_improve(tmp_path: Path) -> None:
+    candidate = make_candidate(tmp_path)
+    synced = tmp_path / "candidate.synced.ass"
+    synced.write_text("[Events]\n", encoding="utf-8")
+
+    decision = decide_candidate_version(
+        candidate=candidate,
+        original_score=AlignmentScore(0.90, []),
+        sync_result=SyncResult(attempted=True, succeeded=True, output_path=synced),
+        synced_score=AlignmentScore(0.98, []),
+    )
+
+    assert decision.selected_version == "original"
+    assert decision.selected_path == candidate.subtitle_path
+    assert decision.selected_score == 0.90
+    assert decision.decision_reason == "Original subtitle already aligned; sync skipped."
+
+
 def test_decision_selects_synced_at_exact_improvement_threshold(tmp_path: Path) -> None:
     candidate = make_candidate(tmp_path)
     synced = tmp_path / "candidate.synced.ass"
