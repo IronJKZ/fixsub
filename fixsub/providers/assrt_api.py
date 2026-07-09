@@ -47,6 +47,16 @@ def _sanitize_result_id(result_id: str) -> str:
     return sanitized or "subtitle"
 
 
+def _download_suffix(content: bytes, result_format: str | None) -> str:
+    if content.startswith(b"PK\x03\x04"):
+        return ".zip"
+    if content.startswith(b"Rar!\x1a\x07"):
+        return ".rar"
+    if content.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return ".7z"
+    return "." + (result_format or "bin").lstrip(".")
+
+
 def _iter_sub_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     sub = payload.get("sub")
     if not isinstance(sub, dict):
@@ -107,7 +117,7 @@ class AssrtClient:
             params["id"] = result.result_id
         response = self.http_client.get(url, params=params)
         response.raise_for_status()
-        suffix = "." + (result.format or "bin")
+        suffix = _download_suffix(response.content, result.format)
         safe_id = _sanitize_result_id(result.result_id)
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / f"assrt_{safe_id}{suffix}"

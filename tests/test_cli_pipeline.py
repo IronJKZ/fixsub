@@ -147,6 +147,36 @@ def test_cli_writes_metadata_when_search_returns_no_results(tmp_path: Path, monk
     assert metadata["message"] == "No ASSRT candidates found."
 
 
+def test_cli_writes_metadata_when_all_search_queries_fail(tmp_path: Path, monkeypatch) -> None:
+    _write_video(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ASSRT_TOKEN", "secret")
+
+    class FakeClient:
+        def __init__(self, token: str) -> None:
+            assert token == "secret"
+
+        def search(self, query: str) -> list[SearchResult]:
+            raise RuntimeError(f"bad token for {query}")
+
+    monkeypatch.setattr("fixsub.cli.AssrtClient", FakeClient)
+
+    result = CliRunner().invoke(app, ["--dry-run"])
+
+    assert result.exit_code != 0
+    assert "ASSRT search failed" in result.output
+    assert "No ASSRT candidates found." not in result.output
+    metadata = _read_metadata(tmp_path)
+    assert set(metadata) == METADATA_KEYS
+    assert metadata["queries"]
+    assert metadata["downloaded"] == []
+    assert metadata["candidates"] == []
+    assert metadata["selected_audio"] is None
+    assert metadata["decisions"] == []
+    assert metadata["final_output"] is None
+    assert metadata["message"] == "ASSRT search failed for all queries."
+
+
 def test_cli_writes_metadata_when_downloads_produce_no_candidates(tmp_path: Path, monkeypatch) -> None:
     _write_video(tmp_path)
     downloaded_path = tmp_path / ".fixsub" / "downloads" / "assrt_1001.zip"

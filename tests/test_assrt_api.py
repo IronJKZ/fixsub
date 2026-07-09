@@ -1,5 +1,7 @@
+import io
 import json
 from pathlib import Path
+import zipfile
 
 import httpx
 import pytest
@@ -149,3 +151,24 @@ def test_client_download_sanitizes_result_id_and_creates_target_dir(tmp_path: Pa
     assert downloaded.path.name == "assrt_x.srt"
     assert downloaded.path.read_bytes() == b"subtitle"
     assert not (tmp_path / "x.srt").exists()
+
+
+def test_client_download_uses_archive_suffix_when_content_is_zip(tmp_path: Path) -> None:
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("movie.ass", "[Events]\n")
+    archive_bytes = archive_buffer.getvalue()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=archive_bytes)
+
+    client = AssrtClient(token="secret-token", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    downloaded = client.download(
+        result=parse_search_response({"sub": {"subs": [{"id": "1001", "native_name": "movie.ass"}]}})[0],
+        target_dir=tmp_path,
+    )
+
+    assert downloaded.path.name == "assrt_1001.zip"
+    assert not (tmp_path / "assrt_1001.ass").exists()
+    assert downloaded.path.read_bytes() == archive_bytes

@@ -156,11 +156,17 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
 
     queries = generate_search_queries(movie)
     search_results: list[SearchResult] = []
+    successful_searches = 0
     for query in queries:
         try:
             search_results.extend(client.search(query))
+            successful_searches += 1
         except Exception as exc:
             append_log(log_path, f"Search failed for {query}: {exc}")
+    if queries and successful_searches == 0:
+        message = "ASSRT search failed for all queries."
+        _write_pipeline_metadata(metadata_path, movie=movie, options=options, queries=queries, message=message)
+        raise FixsubError(message)
     ranked_results = rank_search_results(search_results, movie)
     if not ranked_results:
         message = "No ASSRT candidates found."
@@ -205,7 +211,7 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
     best = ranked_decisions[0]
     final_output = None
     if best.is_poor:
-        message = "No high-confidence subtitle found."
+        message = "No high-confidence subtitle found. Inspect candidates in .fixsub/candidates."
     elif options.dry_run:
         message = f"Dry run complete. Best candidate: {best.candidate.candidate_id} ({best.selected_score:.2f})."
     else:
