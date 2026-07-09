@@ -37,6 +37,34 @@ def _as_json(value):
     return value
 
 
+def _write_pipeline_metadata(
+    metadata_path: Path,
+    *,
+    movie,
+    options: RunOptions,
+    queries: list[str] | None = None,
+    downloaded: list[DownloadedFile] | None = None,
+    candidates: list[SubtitleCandidate] | None = None,
+    selected_audio: str | None = None,
+    decisions: list[CandidateDecision] | None = None,
+    final_output: Path | None = None,
+    message: str,
+) -> dict[str, object]:
+    metadata = {
+        "video": movie.to_json(),
+        "options": options.to_json(),
+        "queries": queries or [],
+        "downloaded": [_as_json(item) for item in downloaded or []],
+        "candidates": [_as_json(item) for item in candidates or []],
+        "selected_audio": selected_audio,
+        "decisions": [_as_json(item) for item in decisions or []],
+        "final_output": final_output,
+        "message": message,
+    }
+    write_results_json(metadata_path, metadata)
+    return metadata
+
+
 def _candidate_target(candidate_dir: Path, candidate_id: str, source: Path) -> Path:
     suffix = source.suffix.lower() or ".srt"
     target = candidate_dir / f"{candidate_id}{suffix}"
@@ -114,13 +142,16 @@ def _decide_candidates(
 def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
     workdirs = create_workdirs(base_dir)
     log_path = workdirs.logs / "fixsub.log"
+    metadata_path = workdirs.metadata / "results.json"
     video_path = detect_video(base_dir)
     movie = parse_movie_info(video_path)
     append_log(log_path, f"Video: {video_path}")
 
     token = os.environ.get("ASSRT_TOKEN", "").strip()
     if not token:
-        raise ProviderConfigError("ASSRT_TOKEN is required for ASSRT API access")
+        message = "ASSRT_TOKEN is required for ASSRT API access"
+        _write_pipeline_metadata(metadata_path, movie=movie, options=options, message=message)
+        raise ProviderConfigError(message)
     client = AssrtClient(token=token)
 
     queries = generate_search_queries(movie)
@@ -132,7 +163,9 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
             append_log(log_path, f"Search failed for {query}: {exc}")
     ranked_results = rank_search_results(search_results, movie)
     if not ranked_results:
-        raise NoCandidatesError("No ASSRT candidates found.")
+        message = "No ASSRT candidates found."
+        _write_pipeline_metadata(metadata_path, movie=movie, options=options, queries=queries, message=message)
+        raise NoCandidatesError(message)
 
     probe = probe_video(video_path)
     if options.audio:
@@ -154,7 +187,19 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
         options.no_sync,
     )
     if not decisions:
-        raise NoCandidatesError("No downloadable or extractable ASSRT candidates.")
+        message = "No downloadable or extractable ASSRT candidates."
+        _write_pipeline_metadata(
+            metadata_path,
+            movie=movie,
+            options=options,
+            queries=queries,
+            downloaded=downloaded,
+            candidates=candidates,
+            selected_audio=selected_audio,
+            decisions=decisions,
+            message=message,
+        )
+        raise NoCandidatesError(message)
 
     ranked_decisions = rank_decisions(decisions)
     best = ranked_decisions[0]
@@ -167,18 +212,18 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
         final_output = write_final_subtitle(best.selected_path, video_path, options.lang, workdirs.original)
         message = f"Applied subtitle: {final_output}"
 
-    metadata = {
-        "video": movie.to_json(),
-        "options": options.to_json(),
-        "queries": queries,
-        "downloaded": [_as_json(item) for item in downloaded],
-        "candidates": [_as_json(item) for item in candidates],
-        "selected_audio": selected_audio,
-        "decisions": [_as_json(item) for item in ranked_decisions],
-        "final_output": final_output,
-        "message": message,
-    }
-    write_results_json(workdirs.metadata / "results.json", metadata)
+    metadata = _write_pipeline_metadata(
+        metadata_path,
+        movie=movie,
+        options=options,
+        queries=queries,
+        downloaded=downloaded,
+        candidates=candidates,
+        selected_audio=selected_audio,
+        decisions=ranked_decisions,
+        final_output=final_output,
+        message=message,
+    )
     return {"message": message, "metadata": metadata}
 
 
