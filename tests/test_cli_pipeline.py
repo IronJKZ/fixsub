@@ -115,7 +115,7 @@ def test_cli_writes_metadata_when_token_is_missing_after_video_detection(tmp_pat
     assert metadata["selected_audio"] is None
     assert metadata["decisions"] == []
     assert metadata["final_output"] is None
-    assert metadata["message"] == "ASSRT_TOKEN is required for ASSRT API access"
+    assert metadata["message"] == "ASSRT_TOKEN is required for ASSRT API access."
 
 
 def test_cli_writes_metadata_when_search_returns_no_results(tmp_path: Path, monkeypatch) -> None:

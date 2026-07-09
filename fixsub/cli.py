@@ -149,7 +149,7 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
 
     token = os.environ.get("ASSRT_TOKEN", "").strip()
     if not token:
-        message = "ASSRT_TOKEN is required for ASSRT API access"
+        message = "ASSRT_TOKEN is required for ASSRT API access."
         _write_pipeline_metadata(metadata_path, movie=movie, options=options, message=message)
         raise ProviderConfigError(message)
     client = AssrtClient(token=token)
