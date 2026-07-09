@@ -3,12 +3,14 @@ from __future__ import annotations
 import re
 from pathlib import PurePath
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import httpx
 
 from fixsub.models import DownloadedFile, SearchResult
 
 ASSRT_API_BASE = "https://api.assrt.net/v1"
+ALLOWED_DOWNLOAD_SUFFIXES = {".zip", ".rar", ".7z", ".srt", ".ass", ".ssa"}
 
 
 def _detect_language(item: dict[str, Any]) -> str | None:
@@ -47,14 +49,45 @@ def _sanitize_result_id(result_id: str) -> str:
     return sanitized or "subtitle"
 
 
-def _download_suffix(content: bytes, result_format: str | None) -> str:
+def _allowed_suffix(value: str | None) -> str | None:
+    if not value:
+        return None
+    suffix = PurePath(unquote(value)).suffix.lower()
+    return suffix if suffix in ALLOWED_DOWNLOAD_SUFFIXES else None
+
+
+def _content_disposition_filename(value: str | None) -> str | None:
+    if not value:
+        return None
+    filename_star = re.search(r"""filename\*\s*=\s*(?:UTF-8'')?("?)([^";]+)\1""", value, re.IGNORECASE)
+    if filename_star:
+        return unquote(filename_star.group(2).strip())
+    filename = re.search(r"""filename\s*=\s*("?)([^";]+)\1""", value, re.IGNORECASE)
+    if filename:
+        return filename.group(2).strip()
+    return None
+
+
+def _download_suffix(content: bytes, result: SearchResult, response: httpx.Response) -> str:
     if content.startswith(b"PK\x03\x04"):
         return ".zip"
     if content.startswith(b"Rar!\x1a\x07"):
         return ".rar"
     if content.startswith(b"7z\xbc\xaf\x27\x1c"):
         return ".7z"
-    return "." + (result_format or "bin").lstrip(".")
+    header_filename = _content_disposition_filename(response.headers.get("Content-Disposition"))
+    for value in [
+        header_filename,
+        urlparse(result.download_url or str(response.request.url)).path,
+        result.title,
+        result.raw.get("filename") if isinstance(result.raw, dict) else None,
+        result.raw.get("native_name") if isinstance(result.raw, dict) else None,
+    ]:
+        suffix = _allowed_suffix(str(value) if value else None)
+        if suffix:
+            return suffix
+    format_suffix = _allowed_suffix(f".{result.format.lstrip('.')}") if result.format else None
+    return format_suffix or ".bin"
 
 
 def _iter_sub_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -117,7 +150,7 @@ class AssrtClient:
             params["id"] = result.result_id
         response = self.http_client.get(url, params=params)
         response.raise_for_status()
-        suffix = _download_suffix(response.content, result.format)
+        suffix = _download_suffix(response.content, result, response)
         safe_id = _sanitize_result_id(result.result_id)
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / f"assrt_{safe_id}{suffix}"

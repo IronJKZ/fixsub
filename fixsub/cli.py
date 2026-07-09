@@ -173,14 +173,20 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
         _write_pipeline_metadata(metadata_path, movie=movie, options=options, queries=queries, message=message)
         raise NoCandidatesError(message)
 
-    probe = probe_video(video_path)
+    try:
+        probe = probe_video(video_path)
+    except FixsubError as exc:
+        _write_pipeline_metadata(metadata_path, movie=movie, options=options, queries=queries, message=str(exc))
+        raise
     if options.audio:
         selected_audio = options.audio
     else:
         try:
             selected_audio = select_audio_stream(probe.audio_streams).ffsubsync_id
         except ValueError as exc:
-            raise FixsubError(str(exc)) from exc
+            message = str(exc)
+            _write_pipeline_metadata(metadata_path, movie=movie, options=options, queries=queries, message=message)
+            raise FixsubError(message) from exc
     typer.echo(f"Selected reference audio: {selected_audio}")
 
     downloaded, candidates = _download_candidates(client, ranked_results, base_dir, options.max_candidates)

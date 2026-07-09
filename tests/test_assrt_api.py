@@ -172,3 +172,43 @@ def test_client_download_uses_archive_suffix_when_content_is_zip(tmp_path: Path)
     assert downloaded.path.name == "assrt_1001.zip"
     assert not (tmp_path / "assrt_1001.ass").exists()
     assert downloaded.path.read_bytes() == archive_bytes
+
+
+def test_client_download_infers_subtitle_suffix_from_download_url(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+
+    client = AssrtClient(token="secret-token", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    downloaded = client.download(
+        result=SearchResult(
+            provider="assrt",
+            result_id="1001",
+            title="movie",
+            download_url="https://example.test/movie.srt",
+            format=None,
+        ),
+        target_dir=tmp_path,
+    )
+
+    assert downloaded.path.name == "assrt_1001.srt"
+    assert not (tmp_path / "assrt_1001.bin").exists()
+
+
+def test_client_download_infers_subtitle_suffix_from_content_disposition(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"[Script Info]\n",
+            headers={"Content-Disposition": 'attachment; filename="movie.ass"'},
+        )
+
+    client = AssrtClient(token="secret-token", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    downloaded = client.download(
+        result=SearchResult(provider="assrt", result_id="1001", title="movie", format=None),
+        target_dir=tmp_path,
+    )
+
+    assert downloaded.path.name == "assrt_1001.ass"
+    assert not (tmp_path / "assrt_1001.bin").exists()

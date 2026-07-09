@@ -4,6 +4,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from fixsub.cli import app
+from fixsub.errors import FixsubError, MissingDependencyError
 from fixsub.ffprobe import ProbeResult
 from fixsub.models import (
     AlignmentScore,
@@ -175,6 +176,131 @@ def test_cli_writes_metadata_when_all_search_queries_fail(tmp_path: Path, monkey
     assert metadata["decisions"] == []
     assert metadata["final_output"] is None
     assert metadata["message"] == "ASSRT search failed for all queries."
+
+
+def test_cli_writes_metadata_when_probe_fails_after_search(tmp_path: Path, monkeypatch) -> None:
+    _write_video(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ASSRT_TOKEN", "secret")
+
+    class FakeClient:
+        def __init__(self, token: str) -> None:
+            assert token == "secret"
+
+        def search(self, query: str) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    provider="assrt",
+                    result_id="1001",
+                    title="Unforgiven 1992 WEB-DL bilingual.ass",
+                    download_url="https://example.test/1001",
+                    language="bilingual",
+                    format="ass",
+                    pre_score=10,
+                )
+            ]
+
+    error = FixsubError("ffprobe could not read the video")
+    monkeypatch.setattr("fixsub.cli.AssrtClient", FakeClient)
+    monkeypatch.setattr("fixsub.cli.probe_video", lambda path: (_ for _ in ()).throw(error))
+
+    result = CliRunner().invoke(app, ["--dry-run"])
+
+    assert result.exit_code != 0
+    assert "ffprobe could not read the video" in result.output
+    metadata = _read_metadata(tmp_path)
+    assert set(metadata) == METADATA_KEYS
+    assert metadata["queries"]
+    assert metadata["downloaded"] == []
+    assert metadata["candidates"] == []
+    assert metadata["selected_audio"] is None
+    assert metadata["decisions"] == []
+    assert metadata["final_output"] is None
+    assert metadata["message"] == "ffprobe could not read the video"
+
+
+def test_cli_writes_metadata_when_ffprobe_dependency_is_missing_after_search(tmp_path: Path, monkeypatch) -> None:
+    _write_video(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ASSRT_TOKEN", "secret")
+
+    class FakeClient:
+        def __init__(self, token: str) -> None:
+            assert token == "secret"
+
+        def search(self, query: str) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    provider="assrt",
+                    result_id="1001",
+                    title="Unforgiven 1992 WEB-DL bilingual.ass",
+                    download_url="https://example.test/1001",
+                    language="bilingual",
+                    format="ass",
+                    pre_score=10,
+                )
+            ]
+
+    error = MissingDependencyError("ffprobe", "brew install ffmpeg")
+    monkeypatch.setattr("fixsub.cli.AssrtClient", FakeClient)
+    monkeypatch.setattr("fixsub.cli.probe_video", lambda path: (_ for _ in ()).throw(error))
+
+    result = CliRunner().invoke(app, ["--dry-run"])
+
+    assert result.exit_code != 0
+    assert "Missing required command: ffprobe" in result.output
+    metadata = _read_metadata(tmp_path)
+    assert set(metadata) == METADATA_KEYS
+    assert metadata["queries"]
+    assert metadata["downloaded"] == []
+    assert metadata["candidates"] == []
+    assert metadata["selected_audio"] is None
+    assert metadata["decisions"] == []
+    assert metadata["final_output"] is None
+    assert metadata["message"] == "Missing required command: ffprobe\nInstall hint: brew install ffmpeg"
+
+
+def test_cli_writes_metadata_when_no_audio_streams_are_found_after_search(tmp_path: Path, monkeypatch) -> None:
+    _write_video(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ASSRT_TOKEN", "secret")
+
+    class FakeClient:
+        def __init__(self, token: str) -> None:
+            assert token == "secret"
+
+        def search(self, query: str) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    provider="assrt",
+                    result_id="1001",
+                    title="Unforgiven 1992 WEB-DL bilingual.ass",
+                    download_url="https://example.test/1001",
+                    language="bilingual",
+                    format="ass",
+                    pre_score=10,
+                )
+            ]
+
+    monkeypatch.setattr("fixsub.cli.AssrtClient", FakeClient)
+    monkeypatch.setattr(
+        "fixsub.cli.probe_video",
+        lambda path: ProbeResult(duration_seconds=7200, audio_streams=[], raw={}),
+    )
+
+    result = CliRunner().invoke(app, ["--dry-run"])
+
+    assert result.exit_code != 0
+    assert "No audio streams found" in result.output
+    metadata = _read_metadata(tmp_path)
+    assert set(metadata) == METADATA_KEYS
+    assert metadata["queries"]
+    assert metadata["downloaded"] == []
+    assert metadata["candidates"] == []
+    assert metadata["selected_audio"] is None
+    assert metadata["decisions"] == []
+    assert metadata["final_output"] is None
+    assert metadata["message"] == "No audio streams found"
 
 
 def test_cli_writes_metadata_when_downloads_produce_no_candidates(tmp_path: Path, monkeypatch) -> None:
