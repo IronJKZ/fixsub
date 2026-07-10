@@ -4,13 +4,29 @@
 
 The M1 MVP is designed for the common local workflow: open a folder that contains one movie file, run `fixsub`, and get an Infuse-compatible Chinese subtitle written next to the video.
 
+## Provider Support
+
+`fixsub` supports these subtitle sources:
+
+- ASSRT official API search through `ASSRT_TOKEN`
+- ASSRT public web download fallback when the API search result download returns `404`
+- SubHD public search through `https://subhd.tv/search/<query>`
+
+The default provider list is:
+
+```bash
+fixsub --providers assrt,subhd
+```
+
+If `ASSRT_TOKEN` is missing, ASSRT is skipped when another provider is enabled. If you explicitly run `fixsub --providers assrt` without `ASSRT_TOKEN`, the command stops and asks for the token.
+
 ## M1 Support
 
 M1 supports:
 
-- ASSRT official API search through `ASSRT_TOKEN`
 - Video detection in the current folder
-- ASSRT search and download
+- ASSRT search and download, including web fallback for stale API download links
+- SubHD search and download
 - Archive extraction for `.zip`, `.rar`, and `.7z`
 - Subtitle normalization to UTF-8
 - Audio detection through `ffprobe`
@@ -18,7 +34,7 @@ M1 supports:
 - Original-vs-synced scoring and comparison
 - Infuse-compatible output naming
 
-M1 does not implement SubHD, ASSRT web fallback, interactive mode, library scanning, Whisper generation, translation, or a Web UI.
+M1 does not implement interactive mode, library scanning, Whisper generation, translation, or a Web UI.
 
 ## Install
 
@@ -45,6 +61,8 @@ Configure ASSRT API access:
 ```bash
 export ASSRT_TOKEN="your-token"
 ```
+
+ASSRT is optional when SubHD is enabled, but recommended because it gives `fixsub` another source to compare.
 
 ## Usage
 
@@ -86,10 +104,28 @@ Set the output subtitle language tag:
 fixsub --lang zh-Hans
 ```
 
-Use the ASSRT provider:
+Use only SubHD:
+
+```bash
+fixsub --providers subhd
+```
+
+Use ASSRT and SubHD:
+
+```bash
+fixsub --providers assrt,subhd
+```
+
+Use only ASSRT:
 
 ```bash
 fixsub --providers assrt
+```
+
+Preview a real movie folder with more candidates:
+
+```bash
+fixsub --dry-run --max-candidates 20
 ```
 
 Print detailed diagnostic output:
@@ -105,7 +141,7 @@ Supported M1 options:
 - `--no-sync`
 - `--max-candidates 5`
 - `--lang zh-Hans`
-- `--providers assrt`
+- `--providers assrt,subhd`
 - `--debug`
 
 ## Output
@@ -129,6 +165,8 @@ Runtime artifacts are written under `.fixsub/`:
 - `.fixsub/synced/`
 - `.fixsub/logs/fixsub.log`
 - `.fixsub/metadata/results.json`
+
+Provider failures are recorded in `.fixsub/logs/fixsub.log`. ASSRT tokens are redacted before log lines are written.
 
 ## Manual Acceptance Checklist
 
