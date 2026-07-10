@@ -3,13 +3,16 @@ from __future__ import annotations
 import re
 from pathlib import PurePath
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
+from bs4 import BeautifulSoup
+from httpx import HTTPStatusError
 
 from fixsub.models import DownloadedFile, SearchResult
 
 ASSRT_API_BASE = "https://api.assrt.net/v1"
+ASSRT_WEB_BASE = "https://secure.assrt.net"
 ALLOWED_DOWNLOAD_SUFFIXES = {".zip", ".rar", ".7z", ".srt", ".ass", ".ssa"}
 
 
@@ -130,6 +133,49 @@ def parse_search_response(payload: dict[str, Any]) -> list[SearchResult]:
     return results
 
 
+def _assrt_detail_url(result: SearchResult) -> str:
+    if result.detail_url:
+        return urljoin(ASSRT_WEB_BASE, result.detail_url)
+    prefix = result.result_id[:3]
+    return f"{ASSRT_WEB_BASE}/xml/sub/{prefix}/{result.result_id}.xml"
+
+
+def _single_file_downloads(detail_html: str) -> list[str]:
+    matches = re.findall(
+        r"""onthefly\(["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\)""",
+        detail_html,
+    )
+    urls = []
+    for subtitle_id, file_index, filename in matches:
+        urls.append(f"/download/{subtitle_id}/-/{file_index}/{filename}")
+    return urls
+
+
+def _is_chinese_download(url: str) -> bool:
+    lowered = unquote(url).lower()
+    return any(token in lowered for token in ["chs", "cht", "zh", "简", "繁"])
+
+
+def _assrt_web_download_urls(detail_html: str) -> list[str]:
+    soup = BeautifulSoup(detail_html, "html.parser")
+    candidates: list[tuple[int, str]] = []
+    for url in _single_file_downloads(detail_html):
+        candidates.append((0 if _is_chinese_download(url) else 1, url))
+    for anchor in soup.find_all("a", href=True):
+        href = str(anchor["href"])
+        if "/download/" in href:
+            candidates.append((2 if _is_chinese_download(href) else 3, href))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for _, url in sorted(candidates, key=lambda candidate: candidate[0]):
+        if url in seen:
+            continue
+        deduped.append(url)
+        seen.add(url)
+    return [urljoin(ASSRT_WEB_BASE, url) for url in deduped]
+
+
 class AssrtClient:
     def __init__(self, token: str, http_client: httpx.Client | None = None, base_url: str = ASSRT_API_BASE) -> None:
         if not token:
@@ -143,16 +189,39 @@ class AssrtClient:
         response.raise_for_status()
         return parse_search_response(response.json())
 
+    def _download_response(self, url: str, params: dict[str, str] | None = None) -> httpx.Response:
+        response = self.http_client.get(url, params=params)
+        response.raise_for_status()
+        return response
+
+    def _is_api_download_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        base = urlparse(self.base_url)
+        return parsed.netloc == base.netloc and parsed.path.startswith(f"{base.path.rstrip('/')}/sub/download")
+
+    def _download_from_assrt_web(self, result: SearchResult) -> tuple[httpx.Response, str]:
+        detail_url = _assrt_detail_url(result)
+        detail_response = self._download_response(detail_url)
+        for download_url in _assrt_web_download_urls(detail_response.text):
+            response = self._download_response(download_url)
+            return response, download_url
+        raise RuntimeError(f"ASSRT detail page did not expose a download link: {detail_url}")
+
     def download(self, result: SearchResult, target_dir) -> DownloadedFile:
         url = result.download_url or f"{self.base_url}/sub/download"
         params = {"token": self.token}
         if not result.download_url:
             params["id"] = result.result_id
-        response = self.http_client.get(url, params=params)
-        response.raise_for_status()
+        try:
+            response = self._download_response(url, params=params)
+            source_url = str(response.request.url)
+        except HTTPStatusError as exc:
+            if exc.response.status_code != 404 or not self._is_api_download_url(url):
+                raise
+            response, source_url = self._download_from_assrt_web(result)
         suffix = _download_suffix(response.content, result, response)
         safe_id = _sanitize_result_id(result.result_id)
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / f"assrt_{safe_id}{suffix}"
         target_path.write_bytes(response.content)
-        return DownloadedFile(candidate_id=f"assrt_{safe_id}", provider="assrt", path=target_path, source_url=url)
+        return DownloadedFile(candidate_id=f"assrt_{safe_id}", provider="assrt", path=target_path, source_url=source_url)

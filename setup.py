@@ -13,6 +13,7 @@ setup(
         "typer>=0.12.0",
         "rich>=13.0.0",
         "httpx>=0.27.0",
+        "beautifulsoup4>=4.12.0",
         "charset-normalizer>=3.3.0",
     ],
     extras_require={
