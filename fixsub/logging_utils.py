@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from pathlib import Path
 from typing import Any
+
+
+TOKEN_QUERY_RE = re.compile(r"([?&]token=)[^&'\"\\s]+", re.IGNORECASE)
 
 
 def _json_ready(value: Any) -> Any:
@@ -17,6 +22,14 @@ def _json_ready(value: Any) -> Any:
     return value
 
 
+def redact_log_message(message: str) -> str:
+    redacted = TOKEN_QUERY_RE.sub(r"\1<redacted>", message)
+    token = os.environ.get("ASSRT_TOKEN", "").strip()
+    if token:
+        redacted = redacted.replace(token, "<redacted>")
+    return redacted
+
+
 def write_results_json(target: Path, payload: dict[str, Any]) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(_json_ready(payload), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -26,4 +39,4 @@ def write_results_json(target: Path, payload: dict[str, Any]) -> Path:
 def append_log(log_path: Path, message: str) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as file:
-        file.write(f"{message.rstrip()}\n")
+        file.write(f"{redact_log_message(message).rstrip()}\n")
