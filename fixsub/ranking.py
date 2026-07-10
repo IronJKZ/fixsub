@@ -5,9 +5,20 @@ from dataclasses import replace
 
 from fixsub.models import CandidateDecision, MovieInfo, SearchResult
 
+RAW_HAYSTACK_FIELDS = ("videoname", "version", "movie_title", "filename", "native_name")
+
 
 def _contains(text: str, value: str | None) -> bool:
     return bool(value) and value.lower() in text.lower()
+
+
+def _raw_haystack(result: SearchResult) -> str:
+    parts = []
+    for field in RAW_HAYSTACK_FIELDS:
+        value = result.raw.get(field)
+        if value:
+            parts.append(str(value))
+    return " ".join(parts)
 
 
 def _years(text: str) -> set[str]:
@@ -15,7 +26,7 @@ def _years(text: str) -> set[str]:
 
 
 def score_search_result(result: SearchResult, movie: MovieInfo) -> SearchResult:
-    haystack = " ".join([result.title, str(result.raw.get("videoname") or "")]).lower()
+    haystack = " ".join([result.title, _raw_haystack(result)]).lower()
     score = 0.0
     if result.language in {"bilingual", "zh-Hans", "zh-Hant", "zh"}:
         score += 30

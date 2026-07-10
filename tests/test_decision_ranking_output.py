@@ -4,9 +4,9 @@ import json
 import fixsub.output as output
 from fixsub.decision import decide_candidate_version
 from fixsub.logging_utils import append_log, write_results_json
-from fixsub.models import AlignmentScore, SubtitleCandidate, SyncResult
+from fixsub.models import AlignmentScore, MovieInfo, SearchResult, SubtitleCandidate, SyncResult
 from fixsub.output import final_subtitle_path, write_final_subtitle
-from fixsub.ranking import rank_decisions
+from fixsub.ranking import rank_decisions, score_search_result
 
 
 def make_candidate(tmp_path: Path) -> SubtitleCandidate:
@@ -243,6 +243,30 @@ def test_rank_decisions_prefers_non_poor_high_score_over_poor_higher_pre_score(t
     )
 
     assert rank_decisions([poor_decision, good_decision]) == [good_decision, poor_decision]
+
+
+def test_search_result_scoring_uses_subhd_version_raw_field() -> None:
+    info = MovieInfo(
+        path=Path("Nell.1994.WEB-DL.1080p.mkv"),
+        stem="Nell.1994.WEB-DL.1080p",
+        title="Nell",
+        year="1994",
+        source="WEB-DL",
+        resolution="1080p",
+        release_group=None,
+    )
+    result = SearchResult(
+        provider="subhd",
+        result_id="kAqdvK",
+        title="大地的女儿",
+        language="bilingual",
+        format="srt",
+        raw={"version": "Nell.1994.1080p.BluRay.x265-RARBG", "movie_title": "大地的女儿"},
+    )
+
+    scored = score_search_result(result, info)
+
+    assert scored.pre_score >= 63
 
 
 def test_write_results_json_serializes_paths_to_strings(tmp_path: Path) -> None:
