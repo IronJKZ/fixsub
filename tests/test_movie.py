@@ -58,6 +58,36 @@ def test_generate_search_queries_prefers_original_stem() -> None:
 
     assert generate_search_queries(info) == [
         "Unforgiven.1992.1080p.WEB-DL.ENG.DD5.1.H264-GROUP",
+        "file:Unforgiven.1992.1080p.WEB-DL.ENG.DD5.1.H264-GROUP",
+        "Unforgiven 1992 1080p WEB-DL ENG H264-GROUP",
+        "Unforgiven 1992 WEB-DL 1080p",
         "Unforgiven 1992 WEB-DL",
         "Unforgiven 1992",
     ]
+
+
+def test_generate_search_queries_adds_file_and_release_variants() -> None:
+    info = parse_movie_info(Path("Nell.1994.WEB-DL.1080p.mkv"))
+
+    assert generate_search_queries(info) == [
+        "Nell.1994.WEB-DL.1080p",
+        "file:Nell.1994.WEB-DL.1080p",
+        "Nell 1994 WEB-DL 1080p",
+        "Nell 1994 WEB-DL",
+        "Nell 1994",
+    ]
+
+
+def test_generate_search_queries_dedupes_case_insensitively() -> None:
+    info = parse_movie_info(Path("Crash.2004.2004.WEB-DL.mkv"))
+
+    queries = generate_search_queries(info)
+
+    assert queries.count("Crash 2004") == 1
+    assert len({query.lower() for query in queries}) == len(queries)
+
+
+def test_generate_search_queries_normalizes_diacritics() -> None:
+    info = parse_movie_info(Path("Dom.za.vešanje.1988.1080p.BluRay.mkv"))
+
+    assert "Dom za vesanje 1988 BluRay" in generate_search_queries(info)
