@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-TOKEN_QUERY_RE = re.compile(r"([?&]token=)[^&'\"\\s]+", re.IGNORECASE)
+TOKEN_QUERY_RE = re.compile(r"([?&]token=)[^&'\"\s]+", re.IGNORECASE)
 
 
 def _json_ready(value: Any) -> Any:

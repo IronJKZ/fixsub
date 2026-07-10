@@ -290,3 +290,48 @@ def test_client_download_prefers_assrt_single_chinese_file_from_detail_page(tmp_
 
     assert downloaded.path.name == "assrt_156894.srt"
     assert downloaded.source_url == "https://secure.assrt.net/download/156894/-/2/Nell.1994.chs.srt"
+
+
+def test_client_download_redacts_token_from_source_url(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"subtitle", request=request)
+
+    client = AssrtClient(
+        token="secret-token",
+        base_url="https://api.assrt.test/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True),
+    )
+
+    downloaded = client.download(
+        result=SearchResult(provider="assrt", result_id="1001", title="movie.srt", format="srt"),
+        target_dir=tmp_path,
+    )
+
+    assert "secret-token" not in (downloaded.source_url or "")
+    assert downloaded.source_url == "https://api.assrt.test/v1/sub/download?token=<redacted>&id=1001"
+
+
+def test_client_download_rejects_external_assrt_web_fallback_links(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.startswith("https://api.assrt.test/v1/sub/download"):
+            return httpx.Response(404, request=request)
+        if url == "https://secure.assrt.net/xml/sub/156/156894.xml":
+            return httpx.Response(
+                200,
+                text='<a id="btn_download" href="https://evil.test/download/156894/Nell.1994.rar">download</a>',
+                request=request,
+            )
+        return httpx.Response(500, request=request)
+
+    client = AssrtClient(
+        token="secret-token",
+        base_url="https://api.assrt.test/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True),
+    )
+
+    with pytest.raises(RuntimeError, match="did not expose a download link"):
+        client.download(
+            result=SearchResult(provider="assrt", result_id="156894", title="Nell 1994", format=None),
+            target_dir=tmp_path,
+        )

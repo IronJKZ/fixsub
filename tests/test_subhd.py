@@ -75,3 +75,26 @@ def test_subhd_client_download_rejects_html_response(tmp_path: Path) -> None:
 
     with pytest.raises(FixsubError, match="SubHD download returned HTML"):
         client.download(result, tmp_path)
+
+
+def test_subhd_client_download_rejects_html_like_script_response(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"\xef\xbb\xbf<script>challenge()</script>", request=request)
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="SubHD download returned HTML"):
+        client.download(result, tmp_path)
+
+
+def test_subhd_client_download_sniffs_plain_srt_content(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"1\n00:00:01,000 --> 00:00:02,000\nHi\n", request=request)
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML.replace("SRT", "字幕"), "https://subhd.tv/search/Nell%201994")[0]
+
+    downloaded = client.download(result, tmp_path)
+
+    assert downloaded.path.name == "subhd_kAqdvK.srt"

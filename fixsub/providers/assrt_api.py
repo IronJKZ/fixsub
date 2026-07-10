@@ -9,10 +9,12 @@ import httpx
 from bs4 import BeautifulSoup
 from httpx import HTTPStatusError
 
+from fixsub.logging_utils import redact_log_message
 from fixsub.models import DownloadedFile, SearchResult
 
 ASSRT_API_BASE = "https://api.assrt.net/v1"
 ASSRT_WEB_BASE = "https://secure.assrt.net"
+ASSRT_WEB_HOSTS = {"assrt.net", "secure.assrt.net", "2.assrt.net"}
 ALLOWED_DOWNLOAD_SUFFIXES = {".zip", ".rar", ".7z", ".srt", ".ass", ".ssa"}
 
 
@@ -135,7 +137,10 @@ def parse_search_response(payload: dict[str, Any]) -> list[SearchResult]:
 
 def _assrt_detail_url(result: SearchResult) -> str:
     if result.detail_url:
-        return urljoin(ASSRT_WEB_BASE, result.detail_url)
+        detail_url = urljoin(ASSRT_WEB_BASE, result.detail_url)
+        parsed = urlparse(detail_url)
+        if parsed.scheme in {"http", "https"} and parsed.netloc in ASSRT_WEB_HOSTS:
+            return detail_url
     prefix = result.result_id[:3]
     return f"{ASSRT_WEB_BASE}/xml/sub/{prefix}/{result.result_id}.xml"
 
@@ -169,11 +174,15 @@ def _assrt_web_download_urls(detail_html: str) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
     for _, url in sorted(candidates, key=lambda candidate: candidate[0]):
-        if url in seen:
+        absolute_url = urljoin(ASSRT_WEB_BASE, url)
+        parsed = urlparse(absolute_url)
+        if parsed.scheme not in {"http", "https"} or parsed.netloc not in ASSRT_WEB_HOSTS:
             continue
-        deduped.append(url)
-        seen.add(url)
-    return [urljoin(ASSRT_WEB_BASE, url) for url in deduped]
+        if absolute_url in seen:
+            continue
+        deduped.append(absolute_url)
+        seen.add(absolute_url)
+    return deduped
 
 
 class AssrtClient:
@@ -214,7 +223,7 @@ class AssrtClient:
             params["id"] = result.result_id
         try:
             response = self._download_response(url, params=params)
-            source_url = str(response.request.url)
+            source_url = redact_log_message(str(response.request.url))
         except HTTPStatusError as exc:
             if exc.response.status_code != 404 or not self._is_api_download_url(url):
                 raise

@@ -13,6 +13,7 @@ from fixsub.models import DownloadedFile, SearchResult
 
 SUBHD_BASE = "https://subhd.tv"
 ALLOWED_DOWNLOAD_SUFFIXES = {".zip", ".rar", ".7z", ".srt", ".ass", ".ssa"}
+HTML_PREFIXES = (b"<!doctype html", b"<html", b"<head", b"<script", b"<!--")
 
 
 def _text(node: Any) -> str:
@@ -74,8 +75,20 @@ def _download_suffix(content: bytes, result: SearchResult, response: httpx.Respo
         suffix = _allowed_suffix(value)
         if suffix:
             return suffix
+    stripped = content.lstrip(b"\xef\xbb\xbf\r\n\t ")
+    if re.match(rb"\d+\s*\r?\n\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->", stripped):
+        return ".srt"
+    if stripped.startswith(b"[Script Info]") or stripped.startswith(b"[V4+ Styles]") or b"\nDialogue:" in stripped[:2048]:
+        return ".ass"
     format_suffix = _allowed_suffix(f".{result.format.lstrip('.')}") if result.format else None
     return format_suffix or ".bin"
+
+
+def _looks_like_html(content: bytes, content_type: str) -> bool:
+    if "html" in content_type.lower():
+        return True
+    content_start = content[:512].lstrip(b"\xef\xbb\xbf\r\n\t ").lower()
+    return content_start.startswith(HTML_PREFIXES)
 
 
 def parse_search_response(html: str, search_url: str = SUBHD_BASE) -> list[SearchResult]:
@@ -141,8 +154,7 @@ class SubhdClient:
         response = self.http_client.get(url, headers=headers)
         response.raise_for_status()
         content_type = response.headers.get("Content-Type", "").lower()
-        content_start = response.content[:200].lstrip().lower()
-        if "text/html" in content_type or content_start.startswith(b"<!doctype html") or content_start.startswith(b"<html"):
+        if _looks_like_html(response.content, content_type):
             raise FixsubError(f"SubHD download returned HTML instead of a subtitle file: {url}")
         suffix = _download_suffix(response.content, result, response)
         target_dir.mkdir(parents=True, exist_ok=True)
