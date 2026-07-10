@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -17,18 +16,16 @@ from fixsub.models import CandidateDecision, DownloadedFile, RunOptions, SearchR
 from fixsub.movie import detect_video, generate_search_queries, parse_movie_info
 from fixsub.output import write_final_subtitle
 from fixsub.paths import create_workdirs
-from fixsub.providers.assrt_api import AssrtClient
+from fixsub.providers.registry import (
+    DEFAULT_PROVIDERS,
+    ProviderClient,
+    build_provider_clients,
+    parse_providers,
+)
 from fixsub.ranking import rank_decisions, rank_search_results
 from fixsub.sync import run_ffsubsync, synced_output_path
 
 app = typer.Typer(add_completion=False, no_args_is_help=False)
-
-
-def _parse_providers(value: str) -> tuple[str, ...]:
-    providers = tuple(provider.strip().lower() for provider in value.split(",") if provider.strip())
-    if providers != ("assrt",):
-        raise ProviderConfigError("M1 supports assrt only")
-    return providers
 
 
 def _as_json(value):
@@ -79,7 +76,7 @@ def _candidate_target(candidate_dir: Path, candidate_id: str, source: Path) -> P
 
 
 def _download_candidates(
-    client: AssrtClient,
+    clients: dict[str, ProviderClient],
     ranked_results: list[SearchResult],
     base_dir: Path,
     max_candidates: int,
@@ -88,25 +85,24 @@ def _download_candidates(
     candidates: list[SubtitleCandidate] = []
     workdirs = create_workdirs(base_dir)
     log_path = workdirs.logs / "fixsub.log"
-    result_by_id = {result.result_id: result for result in ranked_results}
     for result in ranked_results[:max_candidates]:
         try:
+            client = clients[result.provider]
             downloaded_file = client.download(result, workdirs.downloads)
             downloaded.append(downloaded_file)
             extracted_paths = extract_archive(downloaded_file.path, workdirs.candidates)
             for extracted_path in extracted_paths:
                 normalized_path = _candidate_target(workdirs.candidates, downloaded_file.candidate_id, extracted_path)
                 normalize_to_utf8(extracted_path, normalized_path)
-                scored_result = result_by_id.get(result.result_id, result)
                 candidates.append(
                     SubtitleCandidate(
                         candidate_id=downloaded_file.candidate_id,
                         provider=downloaded_file.provider,
-                        source_title=scored_result.title,
+                        source_title=result.title,
                         subtitle_path=normalized_path,
-                        language=scored_result.language,
-                        format=(normalized_path.suffix.lower().lstrip(".") or scored_result.format or "subtitle"),
-                        pre_score=scored_result.pre_score,
+                        language=result.language,
+                        format=(normalized_path.suffix.lower().lstrip(".") or result.format or "subtitle"),
+                        pre_score=result.pre_score,
                     )
                 )
         except Exception as exc:
@@ -147,29 +143,40 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
     movie = parse_movie_info(video_path)
     append_log(log_path, f"Video: {video_path}")
 
-    token = os.environ.get("ASSRT_TOKEN", "").strip()
-    if not token:
-        message = "ASSRT_TOKEN is required for ASSRT API access."
+    try:
+        clients, provider_warnings = build_provider_clients(options.providers)
+    except ProviderConfigError as exc:
+        message = str(exc)
         _write_pipeline_metadata(metadata_path, movie=movie, options=options, message=message)
-        raise ProviderConfigError(message)
-    client = AssrtClient(token=token)
+        raise
+    for warning in provider_warnings:
+        append_log(log_path, warning)
 
     queries = generate_search_queries(movie)
     search_results: list[SearchResult] = []
     successful_searches = 0
+    seen_results: set[tuple[str, str]] = set()
     for query in queries:
-        try:
-            search_results.extend(client.search(query))
-            successful_searches += 1
-        except Exception as exc:
-            append_log(log_path, f"Search failed for {query}: {exc}")
+        for provider_name, client in clients.items():
+            try:
+                provider_results = client.search(query)
+                successful_searches += 1
+            except Exception as exc:
+                append_log(log_path, f"Search failed for {provider_name}:{query}: {exc}")
+                continue
+            for result in provider_results:
+                key = (result.provider, result.result_id)
+                if key in seen_results:
+                    continue
+                search_results.append(result)
+                seen_results.add(key)
     if queries and successful_searches == 0:
-        message = "ASSRT search failed for all queries."
+        message = "Subtitle search failed for all providers and queries."
         _write_pipeline_metadata(metadata_path, movie=movie, options=options, queries=queries, message=message)
         raise FixsubError(message)
     ranked_results = rank_search_results(search_results, movie)
     if not ranked_results:
-        message = "No ASSRT candidates found."
+        message = "No subtitle candidates found."
         _write_pipeline_metadata(metadata_path, movie=movie, options=options, queries=queries, message=message)
         raise NoCandidatesError(message)
 
@@ -189,7 +196,7 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
             raise FixsubError(message) from exc
     typer.echo(f"Selected reference audio: {selected_audio}")
 
-    downloaded, candidates = _download_candidates(client, ranked_results, base_dir, options.max_candidates)
+    downloaded, candidates = _download_candidates(clients, ranked_results, base_dir, options.max_candidates)
     decisions = _decide_candidates(
         candidates,
         video_path,
@@ -199,7 +206,7 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
         options.no_sync,
     )
     if not decisions:
-        message = "No downloadable or extractable ASSRT candidates."
+        message = "No downloadable or extractable subtitle candidates."
         _write_pipeline_metadata(
             metadata_path,
             movie=movie,
@@ -247,7 +254,11 @@ def main(
     no_sync: bool = typer.Option(False, "--no-sync", help="Skip ffsubsync and rank original candidates only."),
     max_candidates: int = typer.Option(5, "--max-candidates", min=1, help="Maximum candidates to download."),
     lang: str = typer.Option("zh-Hans", "--lang", help="Infuse language suffix for final output."),
-    providers: str = typer.Option("assrt", "--providers", help="Comma-separated providers. M1 supports assrt only."),
+    providers: str = typer.Option(
+        ",".join(DEFAULT_PROVIDERS),
+        "--providers",
+        help="Comma-separated providers: assrt,subhd.",
+    ),
     debug: bool = typer.Option(False, "--debug", help="Print verbose diagnostics."),
 ) -> None:
     if ctx.invoked_subcommand is not None:
@@ -259,7 +270,7 @@ def main(
             no_sync=no_sync,
             max_candidates=max_candidates,
             lang=lang,
-            providers=_parse_providers(providers),
+            providers=parse_providers(providers),
             debug=debug,
         )
         result = run_pipeline(Path.cwd(), options)

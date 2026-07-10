@@ -131,14 +131,14 @@ def test_run_options_defaults() -> None:
 
     assert options.max_candidates == 5
     assert options.lang == "zh-Hans"
-    assert options.providers == ("assrt",)
-    assert options.to_json()["providers"] == ["assrt"]
+    assert options.providers == ("assrt", "subhd")
+    assert options.to_json()["providers"] == ["assrt", "subhd"]
 
 
 def test_run_options_providers_are_immutable_tuple_like() -> None:
     options = RunOptions()
 
     assert isinstance(options.providers, tuple)
-    assert options.providers == ("assrt",)
+    assert options.providers == ("assrt", "subhd")
     with pytest.raises(AttributeError):
         options.providers.append("opensubtitles")

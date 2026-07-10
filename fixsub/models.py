@@ -33,7 +33,7 @@ class RunOptions:
     no_sync: bool = False
     max_candidates: int = 5
     lang: str = "zh-Hans"
-    providers: tuple[str, ...] = ("assrt",)
+    providers: tuple[str, ...] = ("assrt", "subhd")
     debug: bool = False
 
     def to_json(self) -> dict[str, Any]:
