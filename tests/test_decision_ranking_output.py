@@ -6,7 +6,7 @@ from fixsub.decision import decide_candidate_version
 from fixsub.logging_utils import append_log, write_results_json
 from fixsub.models import AlignmentScore, MovieInfo, SearchResult, SubtitleCandidate, SyncResult
 from fixsub.output import final_subtitle_path, write_final_subtitle
-from fixsub.ranking import rank_decisions, score_search_result
+from fixsub.ranking import rank_decisions, rank_search_results, score_search_result
 
 
 def make_candidate(tmp_path: Path) -> SubtitleCandidate:
@@ -267,6 +267,200 @@ def test_search_result_scoring_uses_subhd_version_raw_field() -> None:
     scored = score_search_result(result, info)
 
     assert scored.pre_score >= 63
+
+
+def test_search_result_scoring_matches_release_separators() -> None:
+    info = MovieInfo(
+        path=Path("The.Matrix.1999.1080p.BluRay.mkv"),
+        stem="The.Matrix.1999.1080p.BluRay",
+        title="The Matrix",
+        year="1999",
+        source="BluRay",
+        resolution="1080p",
+        release_group=None,
+    )
+    result = SearchResult(
+        provider="subhd",
+        result_id="matrix",
+        title="黑客帝国",
+        language="bilingual",
+        format="srt",
+        raw={"version": "The.Matrix.1999.1080p.BluRay.x264-GROUP"},
+    )
+
+    scored = score_search_result(result, info)
+
+    assert scored.pre_score >= 63
+
+
+def test_rank_search_results_pushes_missing_title_match_below_exact_movie_match() -> None:
+    info = MovieInfo(
+        path=Path("Nell.1994.WEB-DL.1080p.mkv"),
+        stem="Nell.1994.WEB-DL.1080p",
+        title="Nell",
+        year="1994",
+        source="WEB-DL",
+        resolution="1080p",
+        release_group=None,
+    )
+    wrong_movie = SearchResult(
+        provider="subhd",
+        result_id="farinelli",
+        title="绝代妖姬 Farinelli.1994.FRENCH.1080p.BluRay.H264.AAC-VXT",
+        language="bilingual",
+        format="srt",
+        raw={"version": "Farinelli.1994.FRENCH.1080p.BluRay.H264.AAC-VXT"},
+    )
+    exact_movie = SearchResult(
+        provider="subhd",
+        result_id="nell",
+        title="大地的女儿",
+        language="bilingual",
+        format="srt",
+        raw={"version": "Nell.1994.1080p.BluRay.x265-RARBG"},
+    )
+
+    ranked = rank_search_results([wrong_movie, exact_movie], info)
+
+    assert [result.result_id for result in ranked] == ["nell", "farinelli"]
+
+
+def test_search_result_scoring_preserves_chinese_title_and_number() -> None:
+    info = MovieInfo(
+        path=Path("流浪地球2.2023.1080p.mkv"),
+        stem="流浪地球2.2023.1080p",
+        title="流浪地球2",
+        year="2023",
+        source=None,
+        resolution="1080p",
+        release_group=None,
+    )
+    wrong_movie = SearchResult(
+        provider="subhd",
+        result_id="infernal-affairs-2",
+        title="无间道2",
+        language="bilingual",
+        format="srt",
+        raw={"version": "无间道2.2023.1080p"},
+    )
+    exact_movie = SearchResult(
+        provider="subhd",
+        result_id="wandering-earth-2",
+        title="流浪地球2",
+        language="bilingual",
+        format="srt",
+        raw={"version": "流浪地球2.2023.1080p"},
+    )
+
+    ranked = rank_search_results([wrong_movie, exact_movie], info)
+
+    assert [result.result_id for result in ranked] == ["wandering-earth-2", "infernal-affairs-2"]
+    assert ranked[0].pre_score - ranked[1].pre_score == 15
+
+
+def test_search_result_scoring_preserves_mixed_chinese_english_title() -> None:
+    info = MovieInfo(
+        path=Path("英雄.Hero.2002.1080p.mkv"),
+        stem="英雄.Hero.2002.1080p",
+        title="英雄 Hero",
+        year="2002",
+        source=None,
+        resolution="1080p",
+        release_group=None,
+    )
+    wrong_movie = SearchResult(
+        provider="subhd",
+        result_id="big-hero",
+        title="Big Hero 6",
+        language="bilingual",
+        format="srt",
+        raw={"version": "Big.Hero.6.2002.1080p"},
+    )
+    exact_movie = SearchResult(
+        provider="subhd",
+        result_id="hero",
+        title="英雄 Hero",
+        language="bilingual",
+        format="srt",
+        raw={"version": "英雄.Hero.2002.1080p"},
+    )
+
+    ranked = rank_search_results([wrong_movie, exact_movie], info)
+
+    assert [result.result_id for result in ranked] == ["hero", "big-hero"]
+    assert ranked[0].pre_score - ranked[1].pre_score == 15
+
+
+def test_search_result_scoring_normalizes_unicode_case() -> None:
+    info = MovieInfo(
+        path=Path("Amélie.2001.1080p.mkv"),
+        stem="Amélie.2001.1080p",
+        title="Amélie",
+        year="2001",
+        source=None,
+        resolution="1080p",
+        release_group=None,
+    )
+    result = SearchResult(
+        provider="subhd",
+        result_id="amelie",
+        title="天使爱美丽",
+        language="bilingual",
+        format="srt",
+        raw={"version": "AMÉLIE.2001.1080p"},
+    )
+
+    scored = score_search_result(result, info)
+
+    assert scored.pre_score == 68
+
+
+def test_search_result_scoring_does_not_penalize_missing_title_evidence() -> None:
+    info = MovieInfo(
+        path=Path("Nell.1994.mkv"),
+        stem="Nell.1994",
+        title="Nell",
+        year="1994",
+        source=None,
+        resolution=None,
+        release_group=None,
+    )
+    result = SearchResult(
+        provider="subhd",
+        result_id="translated-only",
+        title="大地的女儿",
+        language="bilingual",
+        format="srt",
+        raw={},
+    )
+
+    scored = score_search_result(result, info)
+
+    assert scored.pre_score == 37
+
+
+def test_search_result_scoring_ignores_title_without_alphanumeric_content() -> None:
+    info = MovieInfo(
+        path=Path("!!!.1994.mkv"),
+        stem="!!!.1994",
+        title="!!!",
+        year="1994",
+        source=None,
+        resolution=None,
+        release_group=None,
+    )
+    result = SearchResult(
+        provider="subhd",
+        result_id="punctuation-title",
+        title="大地的女儿",
+        language="bilingual",
+        format="srt",
+        raw={},
+    )
+
+    scored = score_search_result(result, info)
+
+    assert scored.pre_score == 37
 
 
 def test_write_results_json_serializes_paths_to_strings(tmp_path: Path) -> None:

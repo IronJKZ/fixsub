@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import replace
 
 from fixsub.models import CandidateDecision, MovieInfo, SearchResult
@@ -9,7 +10,22 @@ RAW_HAYSTACK_FIELDS = ("videoname", "version", "movie_title", "filename", "nativ
 
 
 def _contains(text: str, value: str | None) -> bool:
-    return bool(value) and value.lower() in text.lower()
+    if not value:
+        return False
+    normalized_text = _normalize_match_text(text)
+    normalized_value = _normalize_match_text(value)
+    if not normalized_value:
+        return False
+    if normalized_value.isascii():
+        pattern = rf"(?<![a-z0-9]){re.escape(normalized_value)}(?![a-z0-9])"
+        return bool(re.search(pattern, normalized_text))
+    return normalized_value in normalized_text
+
+
+def _normalize_match_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    alphanumeric = "".join(character if character.isalnum() else " " for character in normalized)
+    return " ".join(alphanumeric.split())
 
 
 def _raw_haystack(result: SearchResult) -> str:
