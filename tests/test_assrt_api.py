@@ -258,6 +258,171 @@ def test_client_download_falls_back_to_assrt_detail_page_on_api_404(tmp_path: Pa
     assert requests[1] == "https://secure.assrt.net/xml/sub/156/156894.xml"
 
 
+def test_client_default_http_client_ignores_environment_proxy() -> None:
+    client = AssrtClient(token="secret-token")
+
+    try:
+        assert client.http_client._trust_env is False
+    finally:
+        client.http_client.close()
+
+
+def test_client_download_follows_assrt_file_host_redirect(tmp_path: Path) -> None:
+    requests: list[str] = []
+    https_download_url = "https://secure.assrt.net/download/156894/Nell.1994.rar"
+    file_download_url = "https://file0.assrt.net/download/156894/Nell.1994.rar?token=temporary"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        requests.append(url)
+        if url.startswith("https://api.assrt.test/v1/sub/download"):
+            return httpx.Response(404, request=request)
+        if url == "https://secure.assrt.net/xml/sub/156/156894.xml":
+            return httpx.Response(
+                200,
+                text='<a id="btn_download" href="/download/156894/Nell.1994.rar">archive</a>',
+                request=request,
+            )
+        if url == https_download_url:
+            return httpx.Response(302, headers={"Location": file_download_url}, request=request)
+        if url == file_download_url:
+            return httpx.Response(200, content=b"Rar!\x1a\x07\x00archive", request=request)
+        return httpx.Response(500, request=request)
+
+    client = AssrtClient(
+        token="secret-token",
+        base_url="https://api.assrt.test/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True),
+    )
+
+    downloaded = client.download(
+        result=SearchResult(provider="assrt", result_id="156894", title="Nell 1994", format=None),
+        target_dir=tmp_path,
+    )
+
+    assert downloaded.path.name == "assrt_156894.rar"
+    assert downloaded.path.read_bytes().startswith(b"Rar!")
+    assert downloaded.source_url == https_download_url
+    assert requests[-2:] == [https_download_url, file_download_url]
+
+
+def test_client_download_tries_archive_after_single_file_download_fails(tmp_path: Path) -> None:
+    requests: list[str] = []
+    https_single_url = "https://secure.assrt.net/download/156894/-/2/Nell.1994.chs.srt"
+    https_archive_url = "https://secure.assrt.net/download/156894/Nell.1994.rar"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        requests.append(url)
+        if url.startswith("https://api.assrt.test/v1/sub/download"):
+            return httpx.Response(404, request=request)
+        if url == "https://secure.assrt.net/xml/sub/156/156894.xml":
+            return httpx.Response(
+                200,
+                text=(
+                    '<div onclick=\'onthefly("156894","2","Nell.1994.chs.srt")\'>chs</div>'
+                    '<a id="btn_download" href="/download/156894/Nell.1994.rar">archive</a>'
+                ),
+                request=request,
+            )
+        if url == https_single_url:
+            return httpx.Response(502, request=request)
+        if url == https_archive_url:
+            return httpx.Response(200, content=b"Rar!\x1a\x07\x00archive", request=request)
+        return httpx.Response(500, request=request)
+
+    client = AssrtClient(
+        token="secret-token",
+        base_url="https://api.assrt.test/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True),
+    )
+
+    downloaded = client.download(
+        result=SearchResult(provider="assrt", result_id="156894", title="Nell 1994", format=None),
+        target_dir=tmp_path,
+    )
+
+    assert downloaded.path.name == "assrt_156894.rar"
+    assert downloaded.source_url == https_archive_url
+    assert requests[-2:] == [https_single_url, https_archive_url]
+
+
+def test_client_download_tries_archive_after_single_file_connect_error(tmp_path: Path) -> None:
+    https_single_url = "https://secure.assrt.net/download/156894/-/2/Nell.1994.chs.srt"
+    https_archive_url = "https://secure.assrt.net/download/156894/Nell.1994.rar"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.startswith("https://api.assrt.test/v1/sub/download"):
+            return httpx.Response(404, request=request)
+        if url == "https://secure.assrt.net/xml/sub/156/156894.xml":
+            return httpx.Response(
+                200,
+                text=(
+                    '<div onclick=\'onthefly("156894","2","Nell.1994.chs.srt")\'>chs</div>'
+                    '<a id="btn_download" href="/download/156894/Nell.1994.rar">archive</a>'
+                ),
+                request=request,
+            )
+        if url == https_single_url:
+            raise httpx.ConnectError("[SSL: UNEXPECTED_EOF_WHILE_READING]", request=request)
+        if url == https_archive_url:
+            return httpx.Response(200, content=b"Rar!\x1a\x07\x00archive", request=request)
+        return httpx.Response(500, request=request)
+
+    client = AssrtClient(
+        token="secret-token",
+        base_url="https://api.assrt.test/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True),
+    )
+
+    downloaded = client.download(
+        result=SearchResult(provider="assrt", result_id="156894", title="Nell 1994", format=None),
+        target_dir=tmp_path,
+    )
+
+    assert downloaded.path.name == "assrt_156894.rar"
+    assert downloaded.source_url == https_archive_url
+
+
+def test_client_download_tries_archive_after_single_file_returns_html(tmp_path: Path) -> None:
+    single_url = "https://secure.assrt.net/download/156894/-/2/Nell.1994.chs.srt"
+    archive_url = "https://secure.assrt.net/download/156894/Nell.1994.rar"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.startswith("https://api.assrt.test/v1/sub/download"):
+            return httpx.Response(404, request=request)
+        if url == "https://secure.assrt.net/xml/sub/156/156894.xml":
+            return httpx.Response(
+                200,
+                text=(
+                    '<div onclick=\'onthefly("156894","2","Nell.1994.chs.srt")\'>chs</div>'
+                    '<a id="btn_download" href="/download/156894/Nell.1994.rar">archive</a>'
+                ),
+                request=request,
+            )
+        if url == single_url:
+            return httpx.Response(200, text="<html>temporary error</html>", request=request)
+        if url == archive_url:
+            return httpx.Response(200, content=b"Rar!\x1a\x07\x00archive", request=request)
+        return httpx.Response(500, request=request)
+
+    client = AssrtClient(
+        token="secret-token",
+        base_url="https://api.assrt.test/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True),
+    )
+
+    downloaded = client.download(
+        result=SearchResult(provider="assrt", result_id="156894", title="Nell 1994", format=None),
+        target_dir=tmp_path,
+    )
+
+    assert downloaded.path.name == "assrt_156894.rar"
+    assert downloaded.source_url == archive_url
+
+
 def test_client_download_prefers_assrt_single_chinese_file_from_detail_page(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)

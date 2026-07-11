@@ -14,8 +14,9 @@ from fixsub.models import DownloadedFile, SearchResult
 
 ASSRT_API_BASE = "https://api.assrt.net/v1"
 ASSRT_WEB_BASE = "https://secure.assrt.net"
-ASSRT_WEB_HOSTS = {"assrt.net", "secure.assrt.net", "2.assrt.net"}
 ALLOWED_DOWNLOAD_SUFFIXES = {".zip", ".rar", ".7z", ".srt", ".ass", ".ssa"}
+HTML_PREFIXES = (b"<!doctype html", b"<html", b"<head", b"<script", b"<!--")
+MAX_ASSRT_REDIRECTS = 5
 
 
 def _detect_language(item: dict[str, Any]) -> str | None:
@@ -138,8 +139,7 @@ def parse_search_response(payload: dict[str, Any]) -> list[SearchResult]:
 def _assrt_detail_url(result: SearchResult) -> str:
     if result.detail_url:
         detail_url = urljoin(ASSRT_WEB_BASE, result.detail_url)
-        parsed = urlparse(detail_url)
-        if parsed.scheme in {"http", "https"} and parsed.netloc in ASSRT_WEB_HOSTS:
+        if _is_assrt_web_url(detail_url):
             return detail_url
     prefix = result.result_id[:3]
     return f"{ASSRT_WEB_BASE}/xml/sub/{prefix}/{result.result_id}.xml"
@@ -161,6 +161,19 @@ def _is_chinese_download(url: str) -> bool:
     return any(token in lowered for token in ["chs", "cht", "zh", "简", "繁"])
 
 
+def _is_assrt_web_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    return parsed.scheme == "https" and (hostname == "assrt.net" or hostname.endswith(".assrt.net"))
+
+
+def _looks_like_html(content: bytes, content_type: str) -> bool:
+    if "html" in content_type.lower():
+        return True
+    content_start = content[:512].lstrip(b"\xef\xbb\xbf\r\n\t ").lower()
+    return content_start.startswith(HTML_PREFIXES)
+
+
 def _assrt_web_download_urls(detail_html: str) -> list[str]:
     soup = BeautifulSoup(detail_html, "html.parser")
     candidates: list[tuple[int, str]] = []
@@ -175,8 +188,7 @@ def _assrt_web_download_urls(detail_html: str) -> list[str]:
     seen: set[str] = set()
     for _, url in sorted(candidates, key=lambda candidate: candidate[0]):
         absolute_url = urljoin(ASSRT_WEB_BASE, url)
-        parsed = urlparse(absolute_url)
-        if parsed.scheme not in {"http", "https"} or parsed.netloc not in ASSRT_WEB_HOSTS:
+        if not _is_assrt_web_url(absolute_url):
             continue
         if absolute_url in seen:
             continue
@@ -190,7 +202,7 @@ class AssrtClient:
         if not token:
             raise ValueError("ASSRT_TOKEN is required for ASSRT API access")
         self.token = token
-        self.http_client = http_client or httpx.Client(timeout=20.0, follow_redirects=True)
+        self.http_client = http_client or httpx.Client(timeout=20.0, follow_redirects=True, trust_env=False)
         self.base_url = base_url.rstrip("/")
 
     def search(self, query: str) -> list[SearchResult]:
@@ -208,12 +220,38 @@ class AssrtClient:
         base = urlparse(self.base_url)
         return parsed.netloc == base.netloc and parsed.path.startswith(f"{base.path.rstrip('/')}/sub/download")
 
+    def _download_assrt_web_response(self, url: str) -> httpx.Response:
+        current_url = url
+        for _ in range(MAX_ASSRT_REDIRECTS + 1):
+            if not _is_assrt_web_url(current_url):
+                raise RuntimeError(f"ASSRT web download redirected outside assrt.net: {current_url}")
+            response = self.http_client.get(current_url, follow_redirects=False)
+            if not response.is_redirect:
+                response.raise_for_status()
+                return response
+            location = response.headers.get("Location")
+            if not location:
+                raise RuntimeError(f"ASSRT web download redirect omitted Location: {current_url}")
+            current_url = urljoin(current_url, location)
+        raise RuntimeError(f"ASSRT web download exceeded {MAX_ASSRT_REDIRECTS} redirects: {url}")
+
     def _download_from_assrt_web(self, result: SearchResult) -> tuple[httpx.Response, str]:
         detail_url = _assrt_detail_url(result)
-        detail_response = self._download_response(detail_url)
+        detail_response = self._download_assrt_web_response(detail_url)
+        last_error: Exception | None = None
         for download_url in _assrt_web_download_urls(detail_response.text):
-            response = self._download_response(download_url)
+            try:
+                response = self._download_assrt_web_response(download_url)
+            except (httpx.HTTPError, RuntimeError) as exc:
+                last_error = exc
+                continue
+            content_type = response.headers.get("Content-Type", "")
+            if not response.content or _looks_like_html(response.content, content_type):
+                last_error = RuntimeError(f"ASSRT web download returned empty or HTML content: {download_url}")
+                continue
             return response, download_url
+        if last_error:
+            raise last_error
         raise RuntimeError(f"ASSRT detail page did not expose a download link: {detail_url}")
 
     def download(self, result: SearchResult, target_dir) -> DownloadedFile:
