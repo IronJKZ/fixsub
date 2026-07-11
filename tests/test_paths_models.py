@@ -130,7 +130,7 @@ def test_run_options_defaults() -> None:
     options = RunOptions()
 
     assert options.max_candidates == 5
-    assert options.lang == "zh-Hans"
+    assert options.lang == "zh"
     assert options.providers == ("assrt", "subhd")
     assert options.to_json()["providers"] == ["assrt", "subhd"]
 

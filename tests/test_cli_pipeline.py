@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from fixsub.cli import app
+from fixsub.cli import _download_candidates, app
 from fixsub.errors import FixsubError, MissingDependencyError
 from fixsub.ffprobe import ProbeResult
 from fixsub.models import (
@@ -51,6 +51,39 @@ def _read_metadata(tmp_path: Path) -> dict:
         return json.load(file)
 
 
+def test_download_candidates_rejects_english_content_mislabeled_bilingual(tmp_path: Path) -> None:
+    english = tmp_path / "english.srt"
+    english.write_text(
+        "1\n00:00:05,000 --> 00:00:08,000\n"
+        "He is a freshman who enjoys studying history and joined the debate team.\n",
+        encoding="utf-8",
+    )
+    result = SearchResult(
+        provider="assrt",
+        result_id="674160",
+        title="感谢你抽烟 Thank You for Smoking (2005)",
+        language="bilingual",
+        format="srt",
+    )
+
+    class FakeClient:
+        def download(self, search_result: SearchResult, target_dir: Path) -> DownloadedFile:
+            return DownloadedFile("assrt_674160", "assrt", english, "movie.EN.srt")
+
+    downloaded, candidates = _download_candidates(
+        {"assrt": FakeClient()},
+        [result],
+        tmp_path,
+        max_candidates=1,
+    )
+
+    assert len(downloaded) == 1
+    assert candidates == []
+    assert "Candidate rejected as non-Chinese" in (
+        tmp_path / ".fixsub" / "logs" / "fixsub.log"
+    ).read_text(encoding="utf-8")
+
+
 def test_cli_rejects_unknown_provider(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
@@ -62,7 +95,7 @@ def test_cli_rejects_unknown_provider(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_adjust_shifts_existing_final_subtitle_without_running_pipeline(tmp_path: Path, monkeypatch) -> None:
     video = _write_video(tmp_path)
-    subtitle = video.with_name(f"{video.stem}.zh-Hans.srt")
+    subtitle = video.with_name(f"{video.stem}.zh.srt")
     subtitle.write_text("1\n00:00:05,000 --> 00:00:07,000\nHello\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
@@ -76,6 +109,22 @@ def test_cli_adjust_shifts_existing_final_subtitle_without_running_pipeline(tmp_
     metadata = json.loads((tmp_path / ".fixsub" / "metadata" / "adjustment.json").read_text(encoding="utf-8"))
     assert metadata["seconds"] == 1.25
     assert metadata["shifted_cues"] == 1
+
+
+def test_cli_adjust_migrates_former_default_zh_hans_filename(tmp_path: Path, monkeypatch) -> None:
+    video = _write_video(tmp_path)
+    former_default = video.with_name(f"{video.stem}.zh-Hans.srt")
+    former_default.write_text("1\n00:00:05,000 --> 00:00:07,000\n字幕\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["adjust", "--seconds", "1"])
+
+    migrated = video.with_name(f"{video.stem}.zh.srt")
+    assert result.exit_code == 0
+    assert migrated.exists()
+    assert "00:00:06,000 --> 00:00:08,000" in migrated.read_text(encoding="utf-8")
+    assert not former_default.exists()
+    assert len(list((tmp_path / ".fixsub" / "original").glob(f"*.{former_default.name}"))) == 1
 
 
 def test_cli_accepts_subhd_provider_without_assrt_token(tmp_path: Path, monkeypatch) -> None:

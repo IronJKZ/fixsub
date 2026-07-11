@@ -32,7 +32,7 @@ class RunOptions:
     audio: str | None = None
     no_sync: bool = False
     max_candidates: int = 5
-    lang: str = "zh-Hans"
+    lang: str = "zh"
     providers: tuple[str, ...] = ("assrt", "subhd")
     debug: bool = False
 

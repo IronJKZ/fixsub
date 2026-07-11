@@ -15,7 +15,7 @@ from fixsub.ffprobe import probe_video, select_audio_stream
 from fixsub.logging_utils import append_log, write_results_json
 from fixsub.models import CandidateDecision, DownloadedFile, RunOptions, SearchResult, SubtitleCandidate, SyncResult
 from fixsub.movie import detect_video, generate_search_queries, parse_movie_info
-from fixsub.output import final_subtitle_path, write_final_subtitle
+from fixsub.output import compatible_language_tags, final_subtitle_path, write_final_subtitle
 from fixsub.paths import create_workdirs
 from fixsub.providers.registry import (
     DEFAULT_PROVIDERS,
@@ -25,7 +25,7 @@ from fixsub.providers.registry import (
 )
 from fixsub.ranking import rank_decisions, rank_search_results
 from fixsub.sync import run_ffsubsync, synced_output_path
-from fixsub.subtitles import shift_subtitle_timing
+from fixsub.subtitles import analyze_subtitle_language, shift_subtitle_timing
 
 app = typer.Typer(add_completion=False, no_args_is_help=False)
 auth_app = typer.Typer(help="Manage the ASSRT token in macOS Keychain.")
@@ -100,6 +100,14 @@ def _download_candidates(
             for extracted_path in extracted_paths:
                 normalized_path = _candidate_target(workdirs.candidates, downloaded_file.candidate_id, extracted_path)
                 normalize_to_utf8(extracted_path, normalized_path)
+                language_analysis = analyze_subtitle_language(normalized_path)
+                if language_analysis.classification == "non-chinese":
+                    append_log(
+                        log_path,
+                        f"Candidate rejected as non-Chinese: {result.title} "
+                        f"(Han={language_analysis.han_characters}, Latin={language_analysis.latin_characters})",
+                    )
+                    continue
                 candidates.append(
                     SubtitleCandidate(
                         candidate_id=normalized_path.stem,
@@ -257,9 +265,10 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
 
 def _find_final_subtitle(video_path: Path, lang: str) -> Path:
     matches = [
-        final_subtitle_path(video_path, lang, suffix)
+        final_subtitle_path(video_path, candidate_lang, suffix)
+        for candidate_lang in compatible_language_tags(lang)
         for suffix in SUPPORTED_SUBTITLE_SUFFIXES
-        if final_subtitle_path(video_path, lang, suffix).is_file()
+        if final_subtitle_path(video_path, candidate_lang, suffix).is_file()
     ]
     if not matches:
         raise FixsubError(f"No final subtitle found for {video_path.name} with language tag {lang}.")
@@ -304,7 +313,7 @@ def auth_delete() -> None:
 @app.command()
 def adjust(
     seconds: float = typer.Option(..., "--seconds", help="Shift timestamps: positive delays, negative advances."),
-    lang: str = typer.Option("zh-Hans", "--lang", help="Language tag used by the final subtitle."),
+    lang: str = typer.Option("zh", "--lang", help="Language tag used by the final subtitle."),
     subtitle: Optional[Path] = typer.Option(None, "--subtitle", help="Explicit subtitle path when auto-detection is ambiguous."),
 ) -> None:
     try:
@@ -350,7 +359,7 @@ def main(
     audio: Optional[str] = typer.Option(None, "--audio", help="Force ffsubsync reference stream, such as a:0."),
     no_sync: bool = typer.Option(False, "--no-sync", help="Skip ffsubsync and rank original candidates only."),
     max_candidates: int = typer.Option(5, "--max-candidates", min=1, help="Maximum candidates to download."),
-    lang: str = typer.Option("zh-Hans", "--lang", help="Infuse language suffix for final output."),
+    lang: str = typer.Option("zh", "--lang", help="Infuse language suffix for final output."),
     providers: str = typer.Option(
         ",".join(DEFAULT_PROVIDERS),
         "--providers",

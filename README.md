@@ -111,7 +111,7 @@ Limit the number of candidates:
 fixsub --max-candidates 5
 ```
 
-Set the output subtitle language tag:
+The default output tag is `zh`, which Infuse recognizes reliably. Override it when needed:
 
 ```bash
 fixsub --lang zh-Hans
@@ -153,7 +153,7 @@ Supported M1 options:
 - `--audio a:0`
 - `--no-sync`
 - `--max-candidates 5`
-- `--lang zh-Hans`
+- `--lang zh` (default; use `--lang zh-Hans` to override)
 - `--providers assrt,subhd`
 - `--debug`
 
@@ -162,7 +162,7 @@ Supported M1 options:
 The final subtitle is written next to the detected video using Infuse-compatible naming:
 
 ```text
-<video_stem>.zh-Hans.<ext>
+<video_stem>.zh.<ext>
 ```
 
 When an existing final subtitle would be replaced, it is backed up first:

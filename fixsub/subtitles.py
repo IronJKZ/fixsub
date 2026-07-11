@@ -1,11 +1,58 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from fixsub.errors import FixsubError
 
 SRT_TIMING_PATTERN = re.compile(r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})")
+SUBTITLE_OVERRIDE_PATTERN = re.compile(r"\{[^}]*\}|<[^>]+>")
+HAN_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+LATIN_PATTERN = re.compile(r"[A-Za-z]")
+
+
+@dataclass(frozen=True)
+class SubtitleLanguageAnalysis:
+    classification: Literal["chinese", "non-chinese", "unknown"]
+    han_characters: int
+    latin_characters: int
+
+
+def _visible_subtitle_text(path: Path) -> str:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    suffix = path.suffix.lower()
+    visible_lines: list[str] = []
+    if suffix == ".srt":
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.isdigit() or SRT_TIMING_PATTERN.fullmatch(stripped):
+                continue
+            visible_lines.append(stripped)
+    elif suffix in {".ass", ".ssa"}:
+        for line in text.splitlines():
+            if not line.startswith("Dialogue:"):
+                continue
+            parts = line.split(",", 9)
+            if len(parts) == 10:
+                visible_lines.append(parts[9])
+    return SUBTITLE_OVERRIDE_PATTERN.sub("", "\n".join(visible_lines))
+
+
+def analyze_subtitle_language(path: Path) -> SubtitleLanguageAnalysis:
+    """Classify substantial subtitle dialogue instead of trusting provider metadata."""
+    visible_text = _visible_subtitle_text(path)
+    han_characters = len(HAN_PATTERN.findall(visible_text))
+    latin_characters = len(LATIN_PATTERN.findall(visible_text))
+    relevant_characters = han_characters + latin_characters
+    if relevant_characters < 40:
+        classification = "unknown"
+    elif han_characters / relevant_characters >= 0.05:
+        classification = "chinese"
+    else:
+        classification = "non-chinese"
+    return SubtitleLanguageAnalysis(classification, han_characters, latin_characters)
 
 
 def _parse_srt_time(value: str) -> float:

@@ -1,7 +1,46 @@
 from pathlib import Path
 
 from fixsub.alignment import score_alignment
-from fixsub.subtitles import parse_subtitle_intervals, shift_subtitle_timing
+from fixsub.subtitles import analyze_subtitle_language, parse_subtitle_intervals, shift_subtitle_timing
+
+
+def test_language_analysis_rejects_substantial_english_srt(tmp_path: Path) -> None:
+    subtitle = tmp_path / "english.srt"
+    subtitle.write_text(
+        "1\n00:00:05,000 --> 00:00:08,000\n"
+        "He is a freshman who enjoys studying history and joined the debate team.\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_subtitle_language(subtitle)
+
+    assert analysis.classification == "non-chinese"
+    assert analysis.han_characters == 0
+    assert analysis.latin_characters > 40
+
+
+def test_language_analysis_accepts_chinese_dialogue_and_ignores_ass_styles(tmp_path: Path) -> None:
+    subtitle = tmp_path / "chinese.ssa"
+    subtitle.write_text(
+        "[V4 Styles]\nStyle: Default,Tahoma,18,white\n[Events]\n"
+        "Dialogue: Marked=0,0:00:05.00,0:00:08.00,Default,,0,0,0,,"
+        r"{\fnTahoma}感谢你抽烟，这是一段真正的中文字幕。\NThank you for smoking." "\n"
+        "Dialogue: Marked=0,0:00:09.00,0:00:12.00,Default,,0,0,0,,"
+        "我们只统计对话正文，不统计样式定义里的英文字母。\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_subtitle_language(subtitle)
+
+    assert analysis.classification == "chinese"
+    assert analysis.han_characters > 20
+
+
+def test_language_analysis_leaves_tiny_fixture_unknown(tmp_path: Path) -> None:
+    subtitle = tmp_path / "tiny.srt"
+    subtitle.write_text("1\n00:00:05,000 --> 00:00:07,000\nHi\n", encoding="utf-8")
+
+    assert analyze_subtitle_language(subtitle).classification == "unknown"
 
 
 def test_parse_srt_intervals(tmp_path: Path) -> None:

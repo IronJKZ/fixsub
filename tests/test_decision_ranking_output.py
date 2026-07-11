@@ -225,6 +225,42 @@ def test_write_final_subtitle_backs_up_existing_file_and_writes_selected(tmp_pat
     assert backups[0].read_text(encoding="utf-8") == "existing subtitle\n"
 
 
+def test_write_final_subtitle_backs_up_and_removes_stale_other_format(tmp_path: Path) -> None:
+    video = tmp_path / "Movie.mkv"
+    selected = tmp_path / "selected.ssa"
+    selected.write_text("correct Chinese subtitle\n", encoding="utf-8")
+    stale = tmp_path / "Movie.zh-Hans.srt"
+    stale.write_text("incorrect English subtitle\n", encoding="utf-8")
+    backup_dir = tmp_path / ".fixsub" / "original"
+
+    written_path = write_final_subtitle(selected, video, "zh-Hans", backup_dir)
+
+    backups = list(backup_dir.glob("*.Movie.zh-Hans.srt"))
+    assert written_path == tmp_path / "Movie.zh-Hans.ssa"
+    assert written_path.read_text(encoding="utf-8") == "correct Chinese subtitle\n"
+    assert not stale.exists()
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "incorrect English subtitle\n"
+
+
+def test_write_final_subtitle_migrates_former_default_zh_hans_tag_to_zh(tmp_path: Path) -> None:
+    video = tmp_path / "Movie.mkv"
+    selected = tmp_path / "selected.srt"
+    selected.write_text("correct Chinese subtitle\n", encoding="utf-8")
+    former_default = tmp_path / "Movie.zh-Hans.srt"
+    former_default.write_text("old subtitle\n", encoding="utf-8")
+    backup_dir = tmp_path / ".fixsub" / "original"
+
+    written_path = write_final_subtitle(selected, video, "zh", backup_dir)
+
+    assert written_path == tmp_path / "Movie.zh.srt"
+    assert written_path.read_text(encoding="utf-8") == "correct Chinese subtitle\n"
+    assert not former_default.exists()
+    assert [path.read_text(encoding="utf-8") for path in backup_dir.glob("*.Movie.zh-Hans.srt")] == [
+        "old subtitle\n"
+    ]
+
+
 def test_write_final_subtitle_preserves_backups_when_timestamp_collides(tmp_path: Path, monkeypatch) -> None:
     class FixedDatetime:
         @classmethod
