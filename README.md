@@ -86,11 +86,13 @@ Select a specific audio stream for sync:
 fixsub --audio a:0
 ```
 
-Search, validate, and score candidates without running subtitle sync:
+Inspect candidates without audio validation or subtitle sync:
 
 ```bash
 fixsub --no-sync
 ```
+
+The reported timeline score only checks whether subtitle timestamps look structurally plausible within the video duration. It does not prove that the dialogue matches the movie or that the timing matches the audio. Unless `--no-sync` is explicit, every candidate must pass ffsubsync audio validation before it can be applied automatically.
 
 Limit the number of candidates:
 
@@ -175,7 +177,8 @@ Provider failures are recorded in `.fixsub/logs/fixsub.log`. ASSRT tokens are re
 3. Confirm `.fixsub/metadata/results.json` is written.
 4. Run `fixsub` with a movie that has ASSRT Chinese subtitles.
 5. Confirm selected audio is printed as `a:0`, `a:1`, or another ffsubsync stream id.
-6. Confirm excellent original subtitles skip sync.
-7. Confirm a materially better synced subtitle is selected when its score improves by at least `0.08`.
-8. Confirm worse synced subtitles do not replace originals.
-9. Confirm existing final subtitles are backed up before replacement.
+6. Confirm every candidate attempts ffsubsync unless `--no-sync` is explicit.
+7. Confirm `results.json` records the ffsubsync score, offset, and framerate scale.
+8. Confirm a low-quality or unchanged ffsubsync result is rejected even when the original timeline score is `1.00`.
+9. Confirm the selected candidate reports `selected_version: "synced"` before automatic output.
+10. Confirm existing final subtitles are backed up before replacement.

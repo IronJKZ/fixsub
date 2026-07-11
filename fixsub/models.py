@@ -162,6 +162,9 @@ class SyncResult:
     succeeded: bool
     output_path: Path | None = None
     error: str | None = None
+    ffsubsync_score: float | None = None
+    offset_seconds: float | None = None
+    framerate_scale: float | None = None
 
     def to_json(self) -> dict[str, Any]:
         return _path_to_str(asdict(self))

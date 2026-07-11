@@ -23,7 +23,7 @@ def make_candidate(tmp_path: Path) -> SubtitleCandidate:
     )
 
 
-def test_decision_skips_sync_when_original_is_excellent(tmp_path: Path) -> None:
+def test_decision_keeps_original_when_audio_validation_is_explicitly_skipped(tmp_path: Path) -> None:
     candidate = make_candidate(tmp_path)
 
     decision = decide_candidate_version(
@@ -35,10 +35,10 @@ def test_decision_skips_sync_when_original_is_excellent(tmp_path: Path) -> None:
 
     assert decision.selected_version == "original"
     assert decision.selected_path == candidate.subtitle_path
-    assert decision.decision_reason == "Original subtitle already aligned; sync skipped."
+    assert decision.decision_reason == "Audio validation explicitly skipped; original candidate kept."
 
 
-def test_decision_keeps_excellent_original_even_if_synced_would_improve(tmp_path: Path) -> None:
+def test_decision_selects_audio_validated_sync_even_when_original_timeline_is_excellent(tmp_path: Path) -> None:
     candidate = make_candidate(tmp_path)
     synced = tmp_path / "candidate.synced.ass"
     synced.write_text("[Events]\n", encoding="utf-8")
@@ -50,10 +50,10 @@ def test_decision_keeps_excellent_original_even_if_synced_would_improve(tmp_path
         synced_score=AlignmentScore(0.98, []),
     )
 
-    assert decision.selected_version == "original"
-    assert decision.selected_path == candidate.subtitle_path
-    assert decision.selected_score == 0.90
-    assert decision.decision_reason == "Original subtitle already aligned; sync skipped."
+    assert decision.selected_version == "synced"
+    assert decision.selected_path == synced
+    assert decision.selected_score == 0.98
+    assert decision.decision_reason == "ffsubsync audio alignment succeeded."
 
 
 def test_decision_selects_synced_at_exact_improvement_threshold(tmp_path: Path) -> None:
@@ -111,7 +111,7 @@ def test_decision_keeps_original_when_synced_score_is_missing(tmp_path: Path) ->
     assert decision.decision_reason == "Synced score missing; original candidate kept."
 
 
-def test_decision_keeps_original_when_synced_is_not_better(tmp_path: Path) -> None:
+def test_decision_selects_audio_validated_sync_even_when_timeline_score_is_lower(tmp_path: Path) -> None:
     candidate = make_candidate(tmp_path)
     synced = tmp_path / "candidate.synced.ass"
     synced.write_text("[Events]\n", encoding="utf-8")
@@ -123,8 +123,8 @@ def test_decision_keeps_original_when_synced_is_not_better(tmp_path: Path) -> No
         synced_score=AlignmentScore(0.87, []),
     )
 
-    assert decision.selected_version == "original"
-    assert decision.decision_reason == "Synced version did not improve alignment."
+    assert decision.selected_version == "synced"
+    assert decision.decision_reason == "ffsubsync audio alignment succeeded."
 
 
 def test_decision_marks_candidate_poor_when_both_scores_are_low(tmp_path: Path) -> None:
@@ -142,12 +142,12 @@ def test_decision_marks_candidate_poor_when_both_scores_are_low(tmp_path: Path) 
     assert decision.is_poor is True
 
 
-def test_decision_marks_sync_failure_with_low_original_poor(tmp_path: Path) -> None:
+def test_decision_marks_sync_failure_poor_even_when_original_timeline_looks_excellent(tmp_path: Path) -> None:
     candidate = make_candidate(tmp_path)
 
     decision = decide_candidate_version(
         candidate=candidate,
-        original_score=AlignmentScore(0.40, []),
+        original_score=AlignmentScore(1.0, []),
         sync_result=SyncResult(attempted=True, succeeded=False, error="failed"),
         synced_score=None,
     )
@@ -155,6 +155,47 @@ def test_decision_marks_sync_failure_with_low_original_poor(tmp_path: Path) -> N
     assert decision.selected_version == "original"
     assert decision.is_poor is True
     assert decision.decision_reason == "Sync failed; original candidate kept."
+
+
+def test_rank_decisions_prefers_audio_validated_sync_over_failed_timeline_score(tmp_path: Path) -> None:
+    validated_candidate = make_candidate(tmp_path)
+    synced = tmp_path / "candidate.synced.ass"
+    synced.write_text("[Events]\n", encoding="utf-8")
+    failed_candidate = SubtitleCandidate(
+        candidate_id="assrt_002",
+        provider="assrt",
+        source_title="Nell D9",
+        subtitle_path=tmp_path / "failed.srt",
+        language="zh-Hans",
+        format="srt",
+        pre_score=15,
+    )
+    failed_candidate.subtitle_path.write_text("1\n00:00:30,000 --> 00:00:31,000\nHi\n", encoding="utf-8")
+
+    validated = decide_candidate_version(
+        candidate=validated_candidate,
+        original_score=AlignmentScore(0.92, []),
+        sync_result=SyncResult(attempted=True, succeeded=True, output_path=synced),
+        synced_score=AlignmentScore(1.0, []),
+    )
+    rejected = decide_candidate_version(
+        candidate=failed_candidate,
+        original_score=AlignmentScore(1.0, []),
+        sync_result=SyncResult(
+            attempted=True,
+            succeeded=False,
+            error="ffsubsync rejected a low-quality alignment",
+            offset_seconds=31.73,
+            framerate_scale=1.043,
+        ),
+        synced_score=None,
+    )
+
+    ranked = rank_decisions([rejected, validated])
+
+    assert ranked == [validated, rejected]
+    assert validated.selected_version == "synced"
+    assert rejected.is_poor is True
 
 
 def test_final_subtitle_path_adds_language_before_subtitle_extension(tmp_path: Path) -> None:

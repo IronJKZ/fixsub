@@ -6,7 +6,7 @@ from typing import Optional
 import typer
 
 from fixsub.alignment import score_alignment
-from fixsub.decision import EXCELLENT_ALIGNMENT, decide_candidate_version
+from fixsub.decision import decide_candidate_version
 from fixsub.encoding import normalize_to_utf8
 from fixsub.errors import FixsubError, NoCandidatesError, ProviderConfigError
 from fixsub.extract import extract_archive
@@ -96,7 +96,7 @@ def _download_candidates(
                 normalize_to_utf8(extracted_path, normalized_path)
                 candidates.append(
                     SubtitleCandidate(
-                        candidate_id=downloaded_file.candidate_id,
+                        candidate_id=normalized_path.stem,
                         provider=downloaded_file.provider,
                         source_title=result.title,
                         subtitle_path=normalized_path,
@@ -123,7 +123,7 @@ def _decide_candidates(
         original_score = score_alignment(candidate.subtitle_path, duration_seconds)
         sync_result = SyncResult(attempted=False, succeeded=False)
         synced_score = None
-        if not no_sync and original_score.score < EXCELLENT_ALIGNMENT:
+        if not no_sync:
             output_path = synced_output_path(candidate.subtitle_path, synced_dir)
             try:
                 sync_result = run_ffsubsync(video_path, candidate.subtitle_path, output_path, selected_audio)
@@ -226,7 +226,10 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
     if best.is_poor:
         message = "No high-confidence subtitle found. Inspect candidates in .fixsub/candidates."
     elif options.dry_run:
-        message = f"Dry run complete. Best candidate: {best.candidate.candidate_id} ({best.selected_score:.2f})."
+        message = (
+            f"Dry run complete. Best candidate: {best.candidate.candidate_id} "
+            f"({best.selected_version}, timeline {best.selected_score:.2f})."
+        )
     else:
         final_output = write_final_subtitle(best.selected_path, video_path, options.lang, workdirs.original)
         message = f"Applied subtitle: {final_output}"

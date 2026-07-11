@@ -11,6 +11,7 @@ from fixsub.models import (
     AudioStream,
     DownloadedFile,
     SearchResult,
+    SyncResult,
 )
 
 
@@ -94,7 +95,7 @@ def test_cli_accepts_subhd_provider_without_assrt_token(tmp_path: Path, monkeypa
     )
     monkeypatch.setattr("fixsub.cli.score_alignment", lambda path, duration_seconds: AlignmentScore(0.92, []))
 
-    result = CliRunner().invoke(app, ["--dry-run", "--providers", "subhd"])
+    result = CliRunner().invoke(app, ["--dry-run", "--no-sync", "--providers", "subhd"])
 
     assert result.exit_code == 0
     assert "Dry run complete" in result.output
@@ -147,7 +148,7 @@ def test_cli_default_skips_assrt_when_token_missing_and_subhd_is_available(tmp_p
     )
     monkeypatch.setattr("fixsub.cli.score_alignment", lambda path, duration_seconds: AlignmentScore(0.92, []))
 
-    result = CliRunner().invoke(app, ["--dry-run"])
+    result = CliRunner().invoke(app, ["--dry-run", "--no-sync"])
 
     assert result.exit_code == 0
     assert "Dry run complete" in result.output
@@ -198,13 +199,27 @@ def test_cli_runs_dry_run_pipeline(tmp_path: Path, monkeypatch) -> None:
             raw={},
         ),
     )
-    monkeypatch.setattr("fixsub.cli.score_alignment", lambda path, duration_seconds: AlignmentScore(0.92, []))
+    monkeypatch.setattr("fixsub.cli.score_alignment", lambda path, duration_seconds: AlignmentScore(1.0, []))
+
+    def fake_sync(video_path: Path, subtitle_path: Path, output_path: Path, audio_stream: str) -> SyncResult:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(subtitle_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return SyncResult(
+            attempted=True,
+            succeeded=True,
+            output_path=output_path,
+            ffsubsync_score=100.0,
+            offset_seconds=2.0,
+            framerate_scale=1.0,
+        )
+
+    monkeypatch.setattr("fixsub.cli.run_ffsubsync", fake_sync)
 
     result = CliRunner().invoke(app, ["--dry-run", "--providers", "assrt"])
 
     assert result.exit_code == 0
     assert "Selected reference audio: a:0" in result.output
-    assert "Dry run complete" in result.output
+    assert "Dry run complete. Best candidate: assrt_1001 (synced, timeline 1.00)." in result.output
     assert (tmp_path / ".fixsub" / "metadata" / "results.json").exists()
 
 
