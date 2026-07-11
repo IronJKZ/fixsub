@@ -86,6 +86,15 @@ Select a specific audio stream for sync:
 fixsub --audio a:0
 ```
 
+Fine-tune an existing final subtitle without searching or running ffsubsync again. Positive values delay subtitles; negative values advance them:
+
+```bash
+fixsub adjust --seconds 1.0
+fixsub adjust --seconds -1.0
+```
+
+The existing final subtitle is backed up under `.fixsub/original/`, and the adjustment is recorded in `.fixsub/metadata/adjustment.json`.
+
 Inspect candidates without audio validation or subtitle sync:
 
 ```bash

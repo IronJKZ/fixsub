@@ -48,6 +48,24 @@ def test_cli_rejects_unknown_provider(tmp_path: Path, monkeypatch) -> None:
     assert "Unsupported provider: opensubtitles" in result.output
 
 
+def test_cli_adjust_shifts_existing_final_subtitle_without_running_pipeline(tmp_path: Path, monkeypatch) -> None:
+    video = _write_video(tmp_path)
+    subtitle = video.with_name(f"{video.stem}.zh-Hans.srt")
+    subtitle.write_text("1\n00:00:05,000 --> 00:00:07,000\nHello\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["adjust", "--seconds", "1.25"])
+
+    assert result.exit_code == 0
+    assert "delayed by 1.250s" in result.output
+    assert "00:00:06,250 --> 00:00:08,250" in subtitle.read_text(encoding="utf-8")
+    backups = list((tmp_path / ".fixsub" / "original").glob(f"*.{subtitle.name}"))
+    assert len(backups) == 1
+    metadata = json.loads((tmp_path / ".fixsub" / "metadata" / "adjustment.json").read_text(encoding="utf-8"))
+    assert metadata["seconds"] == 1.25
+    assert metadata["shifted_cues"] == 1
+
+
 def test_cli_accepts_subhd_provider_without_assrt_token(tmp_path: Path, monkeypatch) -> None:
     _write_video(tmp_path)
     subtitle = tmp_path / ".fixsub" / "candidates" / "subhd_kAqdvK.srt"

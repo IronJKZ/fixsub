@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fixsub.alignment import score_alignment
-from fixsub.subtitles import parse_subtitle_intervals
+from fixsub.subtitles import parse_subtitle_intervals, shift_subtitle_timing
 
 
 def test_parse_srt_intervals(tmp_path: Path) -> None:
@@ -40,6 +40,37 @@ def test_parse_ass_skips_malformed_dialogue_rows(tmp_path: Path) -> None:
     intervals = parse_subtitle_intervals(subtitle)
 
     assert intervals == [(10.0, 12.0)]
+
+
+def test_shift_srt_timing_delays_all_cues(tmp_path: Path) -> None:
+    source = tmp_path / "movie.srt"
+    target = tmp_path / "adjusted" / "movie.srt"
+    source.write_text(
+        "1\n00:00:05,000 --> 00:00:07,250\nHello\n\n2\n00:01:00,500 --> 00:01:02,000\nWorld\n",
+        encoding="utf-8",
+    )
+
+    shifted = shift_subtitle_timing(source, target, 1.25)
+
+    assert shifted == 2
+    assert parse_subtitle_intervals(target) == [(6.25, 8.5), (61.75, 63.25)]
+
+
+def test_shift_ass_timing_advances_dialogue_and_clamps_at_zero(tmp_path: Path) -> None:
+    source = tmp_path / "movie.ass"
+    target = tmp_path / "adjusted.ass"
+    source.write_text(
+        "[Events]\n"
+        "Comment: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Keep\n"
+        "Dialogue: 0,0:00:00.50,0:00:02.00,Default,,0,0,0,,Hello\n",
+        encoding="utf-8",
+    )
+
+    shifted = shift_subtitle_timing(source, target, -1.0)
+
+    assert shifted == 1
+    assert parse_subtitle_intervals(target) == [(0.0, 1.0)]
+    assert "Comment: 0,0:00:01.00,0:00:02.00" in target.read_text(encoding="utf-8")
 
 
 def test_alignment_scores_plausible_subtitle_high(tmp_path: Path) -> None:

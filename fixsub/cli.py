@@ -14,7 +14,7 @@ from fixsub.ffprobe import probe_video, select_audio_stream
 from fixsub.logging_utils import append_log, write_results_json
 from fixsub.models import CandidateDecision, DownloadedFile, RunOptions, SearchResult, SubtitleCandidate, SyncResult
 from fixsub.movie import detect_video, generate_search_queries, parse_movie_info
-from fixsub.output import write_final_subtitle
+from fixsub.output import final_subtitle_path, write_final_subtitle
 from fixsub.paths import create_workdirs
 from fixsub.providers.registry import (
     DEFAULT_PROVIDERS,
@@ -24,8 +24,11 @@ from fixsub.providers.registry import (
 )
 from fixsub.ranking import rank_decisions, rank_search_results
 from fixsub.sync import run_ffsubsync, synced_output_path
+from fixsub.subtitles import shift_subtitle_timing
 
 app = typer.Typer(add_completion=False, no_args_is_help=False)
+
+SUPPORTED_SUBTITLE_SUFFIXES = (".srt", ".ass", ".ssa")
 
 
 def _as_json(value):
@@ -247,6 +250,62 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
         message=message,
     )
     return {"message": message, "metadata": metadata}
+
+
+def _find_final_subtitle(video_path: Path, lang: str) -> Path:
+    matches = [
+        final_subtitle_path(video_path, lang, suffix)
+        for suffix in SUPPORTED_SUBTITLE_SUFFIXES
+        if final_subtitle_path(video_path, lang, suffix).is_file()
+    ]
+    if not matches:
+        raise FixsubError(f"No final subtitle found for {video_path.name} with language tag {lang}.")
+    if len(matches) > 1:
+        names = ", ".join(path.name for path in matches)
+        raise FixsubError(f"Multiple final subtitles found ({names}); select one with --subtitle.")
+    return matches[0]
+
+
+@app.command()
+def adjust(
+    seconds: float = typer.Option(..., "--seconds", help="Shift timestamps: positive delays, negative advances."),
+    lang: str = typer.Option("zh-Hans", "--lang", help="Language tag used by the final subtitle."),
+    subtitle: Optional[Path] = typer.Option(None, "--subtitle", help="Explicit subtitle path when auto-detection is ambiguous."),
+) -> None:
+    try:
+        base_dir = Path.cwd()
+        video_path = detect_video(base_dir)
+        subtitle_path = subtitle.expanduser() if subtitle else _find_final_subtitle(video_path, lang)
+        if not subtitle_path.is_absolute():
+            subtitle_path = base_dir / subtitle_path
+        if not subtitle_path.is_file():
+            raise FixsubError(f"Subtitle file not found: {subtitle_path}")
+        if subtitle_path.suffix.lower() not in SUPPORTED_SUBTITLE_SUFFIXES:
+            raise FixsubError(f"Unsupported subtitle format for adjustment: {subtitle_path.suffix or '(none)'}")
+
+        workdirs = create_workdirs(base_dir)
+        adjusted_path = workdirs.root / "adjusted" / subtitle_path.name
+        shifted_count = shift_subtitle_timing(subtitle_path, adjusted_path, seconds)
+        final_output = write_final_subtitle(adjusted_path, video_path, lang, workdirs.original)
+        direction = "delayed" if seconds > 0 else "advanced"
+        message = f"Adjusted {shifted_count} subtitle cues: {direction} by {abs(seconds):.3f}s -> {final_output}"
+        append_log(workdirs.logs / "fixsub.log", message)
+        write_results_json(
+            workdirs.metadata / "adjustment.json",
+            {
+                "video": video_path,
+                "source_subtitle": subtitle_path,
+                "final_output": final_output,
+                "seconds": seconds,
+                "direction": direction,
+                "shifted_cues": shifted_count,
+                "message": message,
+            },
+        )
+    except FixsubError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(message)
 
 
 @app.callback(invoke_without_command=True)
