@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import os
 from typing import Protocol
 
+from fixsub.credentials import get_assrt_token
 from fixsub.errors import ProviderConfigError
+from fixsub.logging_utils import register_log_secret
 from fixsub.models import DownloadedFile, SearchResult
 from fixsub.providers.assrt_api import AssrtClient
 from fixsub.providers.subhd import SubhdClient
@@ -37,13 +38,14 @@ def build_provider_clients(providers: tuple[str, ...]) -> tuple[dict[str, Provid
     clients: dict[str, ProviderClient] = {}
     warnings: list[str] = []
     if "assrt" in providers:
-        token = os.environ.get("ASSRT_TOKEN", "").strip()
+        token, _source = get_assrt_token()
         if token:
+            register_log_secret(token)
             clients["assrt"] = AssrtClient(token=token)
         elif providers == ("assrt",):
-            raise ProviderConfigError("ASSRT_TOKEN is required for ASSRT API access.")
+            raise ProviderConfigError("ASSRT token is required. Run `fixsub auth set` or set ASSRT_TOKEN.")
         else:
-            warnings.append("ASSRT skipped: ASSRT_TOKEN is required for ASSRT API access.")
+            warnings.append("ASSRT skipped: run `fixsub auth set` or set ASSRT_TOKEN.")
     if "subhd" in providers:
         clients["subhd"] = SubhdClient()
     if not clients:

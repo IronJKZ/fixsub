@@ -1,6 +1,8 @@
 import json
+import os
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from fixsub.cli import app
@@ -26,6 +28,16 @@ METADATA_KEYS = {
     "final_output",
     "message",
 }
+
+
+def _environment_assrt_token() -> tuple[str | None, str | None]:
+    token = os.environ.get("ASSRT_TOKEN", "").strip()
+    return (token, "environment") if token else (None, None)
+
+
+@pytest.fixture(autouse=True)
+def isolate_assrt_credentials(monkeypatch) -> None:
+    monkeypatch.setattr("fixsub.providers.registry.get_assrt_token", _environment_assrt_token)
 
 
 def _write_video(tmp_path: Path) -> Path:
@@ -170,7 +182,7 @@ def test_cli_default_skips_assrt_when_token_missing_and_subhd_is_available(tmp_p
 
     assert result.exit_code == 0
     assert "Dry run complete" in result.output
-    assert "ASSRT skipped: ASSRT_TOKEN is required for ASSRT API access." in (
+    assert "ASSRT skipped: run `fixsub auth set` or set ASSRT_TOKEN." in (
         tmp_path / ".fixsub" / "logs" / "fixsub.log"
     ).read_text(encoding="utf-8")
 
@@ -249,7 +261,7 @@ def test_cli_writes_metadata_when_token_is_missing_after_video_detection(tmp_pat
     result = CliRunner().invoke(app, ["--dry-run", "--providers", "assrt"])
 
     assert result.exit_code != 0
-    assert "ASSRT_TOKEN is required" in result.output
+    assert "ASSRT token is required" in result.output
     metadata = _read_metadata(tmp_path)
     assert set(metadata) == METADATA_KEYS
     assert metadata["queries"] == []
@@ -258,7 +270,7 @@ def test_cli_writes_metadata_when_token_is_missing_after_video_detection(tmp_pat
     assert metadata["selected_audio"] is None
     assert metadata["decisions"] == []
     assert metadata["final_output"] is None
-    assert metadata["message"] == "ASSRT_TOKEN is required for ASSRT API access."
+    assert metadata["message"] == "ASSRT token is required. Run `fixsub auth set` or set ASSRT_TOKEN."
 
 
 def test_cli_writes_metadata_when_search_returns_no_results(tmp_path: Path, monkeypatch) -> None:

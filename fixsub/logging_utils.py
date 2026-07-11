@@ -8,6 +8,12 @@ from typing import Any
 
 
 TOKEN_QUERY_RE = re.compile(r"([?&]token=)[^&'\"\s]+", re.IGNORECASE)
+REGISTERED_SECRETS: set[str] = set()
+
+
+def register_log_secret(value: str | None) -> None:
+    if value:
+        REGISTERED_SECRETS.add(value)
 
 
 def _json_ready(value: Any) -> Any:
@@ -27,6 +33,8 @@ def redact_log_message(message: str) -> str:
     token = os.environ.get("ASSRT_TOKEN", "").strip()
     if token:
         redacted = redacted.replace(token, "<redacted>")
+    for secret in REGISTERED_SECRETS:
+        redacted = redacted.replace(secret, "<redacted>")
     return redacted
 
 

@@ -6,6 +6,7 @@ from typing import Optional
 import typer
 
 from fixsub.alignment import score_alignment
+from fixsub.credentials import delete_keychain_token, get_assrt_token, store_keychain_token_interactive
 from fixsub.decision import decide_candidate_version
 from fixsub.encoding import normalize_to_utf8
 from fixsub.errors import FixsubError, NoCandidatesError, ProviderConfigError
@@ -27,6 +28,8 @@ from fixsub.sync import run_ffsubsync, synced_output_path
 from fixsub.subtitles import shift_subtitle_timing
 
 app = typer.Typer(add_completion=False, no_args_is_help=False)
+auth_app = typer.Typer(help="Manage the ASSRT token in macOS Keychain.")
+app.add_typer(auth_app, name="auth")
 
 SUPPORTED_SUBTITLE_SUFFIXES = (".srt", ".ass", ".ssa")
 
@@ -264,6 +267,38 @@ def _find_final_subtitle(video_path: Path, lang: str) -> Path:
         names = ", ".join(path.name for path in matches)
         raise FixsubError(f"Multiple final subtitles found ({names}); select one with --subtitle.")
     return matches[0]
+
+
+@auth_app.command("set")
+def auth_set() -> None:
+    try:
+        store_keychain_token_interactive()
+    except FixsubError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("ASSRT token stored in macOS Keychain.")
+
+
+@auth_app.command("status")
+def auth_status() -> None:
+    _token, source = get_assrt_token()
+    if source == "environment":
+        typer.echo("ASSRT token is available from ASSRT_TOKEN.")
+    elif source == "keychain":
+        typer.echo("ASSRT token is stored in macOS Keychain.")
+    else:
+        typer.echo("No ASSRT token is configured.", err=True)
+        raise typer.Exit(1)
+
+
+@auth_app.command("delete")
+def auth_delete() -> None:
+    try:
+        delete_keychain_token()
+    except FixsubError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("ASSRT token deleted from macOS Keychain.")
 
 
 @app.command()

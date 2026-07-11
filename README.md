@@ -59,8 +59,10 @@ python3 -m pip install ffsubsync
 Configure ASSRT API access:
 
 ```bash
-export ASSRT_TOKEN="your-token"
+fixsub auth set
 ```
+
+The command securely prompts once and stores the token in macOS Keychain. Check or remove it with `fixsub auth status` and `fixsub auth delete`. `ASSRT_TOKEN` remains supported and takes precedence when set for a single shell or automation job.
 
 ASSRT is optional when SubHD is enabled, but recommended because it gives `fixsub` another source to compare.
 
