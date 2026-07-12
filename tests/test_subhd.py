@@ -125,10 +125,10 @@ def test_request_allowed_resolves_relative_redirect_location() -> None:
 
 @pytest.mark.parametrize("status_code", [301, 302, 303])
 def test_request_allowed_rewrites_post_redirect_to_bodyless_get(status_code: int) -> None:
-    requests: list[tuple[str, str, bytes]] = []
+    requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append((request.method, request.url.path, request.content))
+        requests.append(request)
         if request.url.path == "/start":
             return httpx.Response(status_code, headers={"Location": "/final"}, request=request)
         return httpx.Response(200, content=b"done", request=request)
@@ -142,13 +142,108 @@ def test_request_allowed_rewrites_post_redirect_to_bodyless_get(status_code: int
         "POST",
         "https://subhd.test/start",
         json={"sid": "abc"},
+        headers={"Content-Type": "application/json", "Content-Length": "13"},
     )
 
     assert response.content == b"done"
-    assert requests == [
+    assert [(request.method, request.url.path, request.content) for request in requests] == [
         ("POST", "/start", b'{"sid":"abc"}'),
         ("GET", "/final", b""),
     ]
+    assert "Content-Type" not in requests[1].headers
+    assert "Content-Length" not in requests[1].headers
+
+
+def test_request_allowed_preserves_put_and_body_on_301_redirect() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/start":
+            return httpx.Response(301, headers={"Location": "/final"}, request=request)
+        return httpx.Response(200, content=b"done", request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    response = client._request_allowed(
+        "PUT",
+        "https://subhd.test/start",
+        content=b"payload",
+        headers={"Content-Type": "application/octet-stream", "Content-Length": "7"},
+    )
+
+    assert response.content == b"done"
+    assert [(request.method, request.url.path, request.content) for request in requests] == [
+        ("PUT", "/start", b"payload"),
+        ("PUT", "/final", b"payload"),
+    ]
+    assert requests[1].headers["Content-Type"] == "application/octet-stream"
+    assert requests[1].headers["Content-Length"] == "7"
+
+
+@pytest.mark.parametrize("status_code", [302, 303])
+def test_request_allowed_rewrites_put_to_get_for_browser_compatible_redirects(status_code: int) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/start":
+            return httpx.Response(status_code, headers={"Location": "/final"}, request=request)
+        return httpx.Response(200, content=b"done", request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    response = client._request_allowed(
+        "PUT",
+        "https://subhd.test/start",
+        content=b"payload",
+        headers={"Content-Type": "application/octet-stream", "Content-Length": "7"},
+    )
+
+    assert response.content == b"done"
+    assert [(request.method, request.url.path, request.content) for request in requests] == [
+        ("PUT", "/start", b"payload"),
+        ("GET", "/final", b""),
+    ]
+    assert "Content-Type" not in requests[1].headers
+    assert "Content-Length" not in requests[1].headers
+
+
+def test_request_allowed_discards_multipart_body_when_rewriting_to_get() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/start":
+            return httpx.Response(303, headers={"Location": "/final"}, request=request)
+        return httpx.Response(200, content=b"done", request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    response = client._request_allowed(
+        "POST",
+        "https://subhd.test/start",
+        files={"subtitle": ("subtitle.srt", b"payload")},
+    )
+
+    assert response.content == b"done"
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("POST", "/start"),
+        ("GET", "/final"),
+    ]
+    assert requests[0].content
+    assert requests[1].content == b""
+    assert "Content-Type" not in requests[1].headers
+    assert "Content-Length" not in requests[1].headers
 
 
 @pytest.mark.parametrize("status_code", [307, 308])
@@ -237,6 +332,7 @@ def test_subhd_client_download_uses_session_api_and_saves_archive(tmp_path: Path
                 request=request,
             )
         if str(request.url) == "https://dl.subhd.me/subtitles/kAqdvK.zip":
+            assert "tk_download=ready" not in request.headers.get("Cookie", "")
             return httpx.Response(200, content=b"PK\x03\x04archive", request=request)
         raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
@@ -357,6 +453,58 @@ def test_subhd_client_rejects_redirect_outside_allowed_domains(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
+    ("failed_stage", "expected_message"),
+    [
+        ("detail", "SubHD detail request failed"),
+        ("gate", "SubHD download page request failed"),
+        ("api", "SubHD download API request failed"),
+        ("file", "SubHD subtitle file request failed"),
+    ],
+)
+@pytest.mark.parametrize("failure_kind", ["status", "transport"])
+def test_subhd_client_reports_stage_specific_network_errors(
+    tmp_path: Path,
+    failed_stage: str,
+    expected_message: str,
+    failure_kind: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a/kAqdvK":
+            stage = "detail"
+            response = httpx.Response(200, text="<html>detail</html>", request=request)
+        elif request.url.path == "/down/kAqdvK":
+            stage = "gate"
+            response = httpx.Response(200, text="<html>gate</html>", request=request)
+        elif request.url.path == "/api/sub/down":
+            stage = "api"
+            response = httpx.Response(
+                200,
+                json={"success": True, "pass": True, "url": "https://dl.subhd.me/result.srt"},
+                request=request,
+            )
+        elif str(request.url) == "https://dl.subhd.me/result.srt":
+            stage = "file"
+            response = httpx.Response(200, content=b"subtitle", request=request)
+        else:
+            raise AssertionError(f"Unexpected request: {request.url}")
+
+        if stage != failed_stage:
+            return response
+        if failure_kind == "transport":
+            raise httpx.ConnectError("connection failed", request=request)
+        return httpx.Response(503, request=request)
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match=expected_message) as exc_info:
+        client.download(result, tmp_path)
+
+    expected_cause = httpx.ConnectError if failure_kind == "transport" else httpx.HTTPStatusError
+    assert isinstance(exc_info.value.__cause__, expected_cause)
+
+
+@pytest.mark.parametrize(
     ("api_response", "error"),
     [
         (httpx.Response(200, text="not json"), "returned invalid JSON"),
@@ -391,29 +539,6 @@ def test_subhd_client_reports_download_api_errors(
     result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
 
     with pytest.raises(FixsubError, match=error):
-        client.download(result, tmp_path)
-
-
-def test_subhd_client_rejects_empty_final_response(tmp_path: Path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/a/kAqdvK":
-            return httpx.Response(200, text="<html>detail</html>", request=request)
-        if request.url.path == "/down/kAqdvK":
-            return httpx.Response(200, text="<html>gate</html>", request=request)
-        if request.url.path == "/api/sub/down":
-            return httpx.Response(
-                200,
-                json={"success": True, "pass": True, "url": "https://dl.subhd.me/empty.zip"},
-                request=request,
-            )
-        if str(request.url) == "https://dl.subhd.me/empty.zip":
-            return httpx.Response(200, content=b"", request=request)
-        raise AssertionError(f"Unexpected request: {request.url}")
-
-    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
-    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
-
-    with pytest.raises(FixsubError, match="empty response"):
         client.download(result, tmp_path)
 
 
@@ -455,6 +580,32 @@ def test_subhd_client_download_api_preserves_rejection_message(payload: dict[str
 
     with pytest.raises(FixsubError, match="验证码失效"):
         client._api_download_url(result, "https://subhd.tv/down/kAqdvK")
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("  challenge\n\t\x00failed\r\nretry  ", "challenge failed retry"),
+        ("x" * 250, "x" * 200),
+        (123, "request rejected"),
+        ("\n\t\x00", "request rejected"),
+    ],
+)
+def test_subhd_client_download_api_sanitizes_rejection_message(message: object, expected: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"success": False, "pass": False, "msg": message},
+            request=request,
+        )
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError) as exc_info:
+        client._api_download_url(result, "https://subhd.tv/down/kAqdvK")
+
+    assert str(exc_info.value) == f"SubHD download API rejected the request: {expected}"
 
 
 @pytest.mark.parametrize(

@@ -26,6 +26,7 @@ SUBHD_OWNED_DOMAINS = frozenset(
 MAX_SUBHD_REDIRECTS = 5
 ALLOWED_DOWNLOAD_SUFFIXES = {".zip", ".rar", ".7z", ".srt", ".ass", ".ssa"}
 HTML_PREFIXES = (b"<!doctype html", b"<html", b"<head", b"<script", b"<!--")
+REJECTION_MESSAGE_PATTERN = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
 
 
 def _hostname_matches(hostname: str, domain: str) -> bool:
@@ -128,6 +129,13 @@ def _looks_like_html(content: bytes, content_type: str) -> bool:
     return content_start.startswith(HTML_PREFIXES)
 
 
+def _sanitize_rejection_message(value: object) -> str:
+    if not isinstance(value, str):
+        return "request rejected"
+    message = REJECTION_MESSAGE_PATTERN.sub(" ", value).strip()[:200]
+    return message or "request rejected"
+
+
 def parse_search_response(html: str, search_url: str = SUBHD_BASE) -> list[SearchResult]:
     soup = BeautifulSoup(html, "html.parser")
     results: list[SearchResult] = []
@@ -207,12 +215,29 @@ class SubhdClient:
             if not location:
                 raise FixsubError(f"SubHD download redirect omitted Location: {current_url}")
             current_url = urljoin(current_url, location)
-            if response.status_code in {301, 302, 303} and current_method != "HEAD":
+            rewrite_to_get = (response.status_code in {302, 303} and current_method != "HEAD") or (
+                response.status_code == 301 and current_method == "POST"
+            )
+            if rewrite_to_get:
                 current_method = "GET"
                 current_kwargs.pop("json", None)
                 current_kwargs.pop("data", None)
                 current_kwargs.pop("content", None)
+                current_kwargs.pop("files", None)
+                headers = current_kwargs.get("headers")
+                if headers is not None:
+                    rewritten_headers = httpx.Headers(headers)
+                    for header in ("Content-Type", "Content-Length"):
+                        if header in rewritten_headers:
+                            del rewritten_headers[header]
+                    current_kwargs["headers"] = rewritten_headers
         raise FixsubError(f"SubHD download exceeded {MAX_SUBHD_REDIRECTS} redirects: {url}")
+
+    def _request_stage(self, method: str, url: str, error_message: str, **kwargs) -> httpx.Response:
+        try:
+            return self._request_allowed(method, url, **kwargs)
+        except httpx.HTTPError as exc:
+            raise FixsubError(error_message) from exc
 
     def _save_download(self, response: httpx.Response, result: SearchResult, target_dir) -> DownloadedFile:
         content_type = response.headers.get("Content-Type", "").lower()
@@ -234,13 +259,13 @@ class SubhdClient:
 
     def _api_download_url(self, result: SearchResult, gate_url: str) -> str:
         api_url = f"{self.base_url}/api/sub/down"
-        response = self._request_allowed(
+        response = self._request_stage(
             "POST",
             api_url,
+            "SubHD download API request failed",
             json={"sid": result.result_id},
             headers={"Referer": gate_url},
         )
-        response.raise_for_status()
         try:
             payload = response.json()
         except ValueError as exc:
@@ -248,7 +273,7 @@ class SubhdClient:
         if not isinstance(payload, dict):
             raise FixsubError("SubHD download API returned invalid JSON")
         if payload.get("success") is not True or payload.get("pass") is not True:
-            message = str(payload.get("msg") or "request rejected")
+            message = _sanitize_rejection_message(payload.get("msg"))
             raise FixsubError(f"SubHD download API rejected the request: {message}")
         download_url = payload.get("url")
         if not isinstance(download_url, str) or not download_url.strip():
@@ -260,17 +285,19 @@ class SubhdClient:
 
     def download(self, result: SearchResult, target_dir) -> DownloadedFile:
         detail_url = result.detail_url or f"{self.base_url}/a/{result.result_id}"
-        detail_response = self._request_allowed("GET", detail_url)
-        detail_response.raise_for_status()
+        detail_response = self._request_stage("GET", detail_url, "SubHD detail request failed")
 
         gate_url = result.download_url or f"{self.base_url}/down/{result.result_id}"
-        gate_response = self._request_allowed("GET", gate_url, headers={"Referer": detail_url})
-        gate_response.raise_for_status()
+        gate_response = self._request_stage(
+            "GET",
+            gate_url,
+            "SubHD download page request failed",
+            headers={"Referer": detail_url},
+        )
         gate_content_type = gate_response.headers.get("Content-Type", "").lower()
         if not _looks_like_html(gate_response.content, gate_content_type):
             return self._save_download(gate_response, result, target_dir)
 
         download_url = self._api_download_url(result, gate_url)
-        download_response = self._request_allowed("GET", download_url)
-        download_response.raise_for_status()
+        download_response = self._request_stage("GET", download_url, "SubHD subtitle file request failed")
         return self._save_download(download_response, result, target_dir)
