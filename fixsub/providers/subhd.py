@@ -12,8 +12,45 @@ from fixsub.errors import FixsubError
 from fixsub.models import DownloadedFile, SearchResult
 
 SUBHD_BASE = "https://subhd.tv"
+SUBHD_OWNED_DOMAINS = frozenset(
+    {
+        "subhd.tv",
+        "subhd.me",
+        "subhd.one",
+        "subhd.top",
+        "subhd.cc",
+        "subhdtw.com",
+        "subhd.com",
+    }
+)
+MAX_SUBHD_REDIRECTS = 5
 ALLOWED_DOWNLOAD_SUFFIXES = {".zip", ".rar", ".7z", ".srt", ".ass", ".ssa"}
 HTML_PREFIXES = (b"<!doctype html", b"<html", b"<head", b"<script", b"<!--")
+
+
+def _hostname_matches(hostname: str, domain: str) -> bool:
+    return hostname == domain or hostname.endswith(f".{domain}")
+
+
+def _is_allowed_subhd_url(url: str, base_url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        base = urlparse(base_url)
+        port = parsed.port
+    except ValueError:
+        return False
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    base_hostname = (base.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not hostname:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if port not in {None, 443}:
+        return False
+    allowed_domains = set(SUBHD_OWNED_DOMAINS)
+    if base_hostname:
+        allowed_domains.add(base_hostname)
+    return any(_hostname_matches(hostname, domain) for domain in allowed_domains)
 
 
 def _text(node: Any) -> str:
@@ -148,6 +185,35 @@ class SubhdClient:
         response.raise_for_status()
         return parse_search_response(response.text, url)
 
+    def _request_allowed(self, method: str, url: str, **kwargs) -> httpx.Response:
+        current_method = method.upper()
+        current_url = url
+        current_kwargs = dict(kwargs)
+        for redirect_count in range(MAX_SUBHD_REDIRECTS + 1):
+            if not _is_allowed_subhd_url(current_url, self.base_url):
+                if redirect_count:
+                    raise FixsubError(f"SubHD download redirected outside allowed domains: {current_url}")
+                raise FixsubError(f"SubHD download URL is not allowed: {current_url}")
+            response = self.http_client.request(
+                current_method,
+                current_url,
+                follow_redirects=False,
+                **current_kwargs,
+            )
+            if not response.is_redirect:
+                response.raise_for_status()
+                return response
+            location = response.headers.get("Location")
+            if not location:
+                raise FixsubError(f"SubHD download redirect omitted Location: {current_url}")
+            current_url = urljoin(current_url, location)
+            if response.status_code in {301, 302, 303} and current_method != "HEAD":
+                current_method = "GET"
+                current_kwargs.pop("json", None)
+                current_kwargs.pop("data", None)
+                current_kwargs.pop("content", None)
+        raise FixsubError(f"SubHD download exceeded {MAX_SUBHD_REDIRECTS} redirects: {url}")
+
     def _save_download(self, response: httpx.Response, result: SearchResult, target_dir) -> DownloadedFile:
         content_type = response.headers.get("Content-Type", "").lower()
         if not response.content:
@@ -168,7 +234,8 @@ class SubhdClient:
 
     def _api_download_url(self, result: SearchResult, gate_url: str) -> str:
         api_url = f"{self.base_url}/api/sub/down"
-        response = self.http_client.post(
+        response = self._request_allowed(
+            "POST",
             api_url,
             json={"sid": result.result_id},
             headers={"Referer": gate_url},
@@ -186,21 +253,24 @@ class SubhdClient:
         download_url = payload.get("url")
         if not isinstance(download_url, str) or not download_url.strip():
             raise FixsubError("SubHD download API omitted a download URL")
-        return urljoin(api_url, download_url.strip())
+        resolved_url = urljoin(api_url, download_url.strip())
+        if not _is_allowed_subhd_url(resolved_url, self.base_url):
+            raise FixsubError(f"SubHD download URL is not allowed: {resolved_url}")
+        return resolved_url
 
     def download(self, result: SearchResult, target_dir) -> DownloadedFile:
         detail_url = result.detail_url or f"{self.base_url}/a/{result.result_id}"
-        detail_response = self.http_client.get(detail_url)
+        detail_response = self._request_allowed("GET", detail_url)
         detail_response.raise_for_status()
 
         gate_url = result.download_url or f"{self.base_url}/down/{result.result_id}"
-        gate_response = self.http_client.get(gate_url, headers={"Referer": detail_url})
+        gate_response = self._request_allowed("GET", gate_url, headers={"Referer": detail_url})
         gate_response.raise_for_status()
         gate_content_type = gate_response.headers.get("Content-Type", "").lower()
         if not _looks_like_html(gate_response.content, gate_content_type):
             return self._save_download(gate_response, result, target_dir)
 
         download_url = self._api_download_url(result, gate_url)
-        download_response = self.http_client.get(download_url)
+        download_response = self._request_allowed("GET", download_url)
         download_response.raise_for_status()
         return self._save_download(download_response, result, target_dir)

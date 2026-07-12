@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from fixsub.errors import FixsubError
-from fixsub.providers.subhd import SubhdClient, parse_search_response
+from fixsub.providers.subhd import SubhdClient, _is_allowed_subhd_url, parse_search_response
 
 
 SEARCH_HTML = """
@@ -23,6 +23,28 @@ SEARCH_HTML = """
   </div>
 </div>
 """
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://subhd.tv/file.zip", True),
+        ("https://dl.subhd.me/file.rar", True),
+        ("https://cdn.subhd.one/file.7z", True),
+        ("https://subhdtw.com/file.srt", True),
+        ("http://dl.subhd.me/file.zip", False),
+        ("https://subhd.me:444/file.zip", False),
+        ("https://user:pass@subhd.me/file.zip", False),
+        ("https://subhd.me.evil.example/file.zip", False),
+        ("https://evil.example/file.zip", False),
+    ],
+)
+def test_is_allowed_subhd_url(url: str, expected: bool) -> None:
+    assert _is_allowed_subhd_url(url, "https://subhd.tv") is expected
+
+
+def test_is_allowed_subhd_url_accepts_configured_test_host() -> None:
+    assert _is_allowed_subhd_url("https://cdn.subhd.test/file.zip", "https://subhd.test") is True
 
 
 def test_parse_search_response_extracts_subhd_results() -> None:
@@ -138,6 +160,121 @@ def test_subhd_client_download_rejects_empty_final_response(tmp_path: Path) -> N
                 request=request,
             )
         if str(request.url) == "https://dl.subhd.me/result.srt":
+            return httpx.Response(200, content=b"", request=request)
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="empty response"):
+        client.download(result, tmp_path)
+
+
+def test_subhd_client_rejects_untrusted_api_url_without_requesting_it(tmp_path: Path) -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        if request.url.path == "/a/kAqdvK":
+            return httpx.Response(200, text="<html>detail</html>", request=request)
+        if request.url.path == "/down/kAqdvK":
+            return httpx.Response(200, text="<html>gate</html>", request=request)
+        if request.url.path == "/api/sub/down":
+            return httpx.Response(
+                200,
+                json={"success": True, "pass": True, "url": "https://evil.example/subtitle.zip"},
+                request=request,
+            )
+        raise AssertionError(f"Unsafe URL was requested: {request.url}")
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="download URL is not allowed"):
+        client.download(result, tmp_path)
+
+    assert "https://evil.example/subtitle.zip" not in requested_urls
+
+
+def test_subhd_client_rejects_redirect_outside_allowed_domains(tmp_path: Path) -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        if request.url.path == "/a/kAqdvK":
+            return httpx.Response(200, text="<html>detail</html>", request=request)
+        if request.url.path == "/down/kAqdvK":
+            return httpx.Response(200, text="<html>gate</html>", request=request)
+        if request.url.path == "/api/sub/down":
+            return httpx.Response(
+                200,
+                json={"success": True, "pass": True, "url": "https://dl.subhd.me/start.zip"},
+                request=request,
+            )
+        if str(request.url) == "https://dl.subhd.me/start.zip":
+            return httpx.Response(302, headers={"Location": "https://evil.example/final.zip"}, request=request)
+        raise AssertionError(f"Unsafe redirect was requested: {request.url}")
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="redirected outside allowed domains"):
+        client.download(result, tmp_path)
+
+    assert "https://evil.example/final.zip" not in requested_urls
+
+
+@pytest.mark.parametrize(
+    ("api_response", "error"),
+    [
+        (httpx.Response(200, text="not json"), "returned invalid JSON"),
+        (httpx.Response(200, json=[]), "returned invalid JSON"),
+        (
+            httpx.Response(200, json={"success": False, "pass": False, "msg": "临时页面已经失效"}),
+            "临时页面已经失效",
+        ),
+        (httpx.Response(200, json={"success": True, "pass": True, "url": None}), "omitted a download URL"),
+    ],
+)
+def test_subhd_client_reports_download_api_errors(
+    tmp_path: Path,
+    api_response: httpx.Response,
+    error: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a/kAqdvK":
+            return httpx.Response(200, text="<html>detail</html>", request=request)
+        if request.url.path == "/down/kAqdvK":
+            return httpx.Response(200, text="<html>gate</html>", request=request)
+        if request.url.path == "/api/sub/down":
+            return httpx.Response(
+                api_response.status_code,
+                content=api_response.content,
+                headers=api_response.headers,
+                request=request,
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match=error):
+        client.download(result, tmp_path)
+
+
+def test_subhd_client_rejects_empty_final_response(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a/kAqdvK":
+            return httpx.Response(200, text="<html>detail</html>", request=request)
+        if request.url.path == "/down/kAqdvK":
+            return httpx.Response(200, text="<html>gate</html>", request=request)
+        if request.url.path == "/api/sub/down":
+            return httpx.Response(
+                200,
+                json={"success": True, "pass": True, "url": "https://dl.subhd.me/empty.zip"},
+                request=request,
+            )
+        if str(request.url) == "https://dl.subhd.me/empty.zip":
             return httpx.Response(200, content=b"", request=request)
         raise AssertionError(f"Unexpected request: {request.url}")
 
