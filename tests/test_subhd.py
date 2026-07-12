@@ -47,6 +47,138 @@ def test_is_allowed_subhd_url_accepts_configured_test_host() -> None:
     assert _is_allowed_subhd_url("https://cdn.subhd.test/file.zip", "https://subhd.test") is True
 
 
+def test_request_allowed_follows_exactly_five_redirects() -> None:
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        hop = int(request.url.path.rsplit("/", 1)[-1])
+        if hop < 5:
+            return httpx.Response(302, headers={"Location": f"/hop/{hop + 1}"}, request=request)
+        return httpx.Response(200, content=b"done", request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    response = client._request_allowed("GET", "https://subhd.test/hop/0")
+
+    assert response.content == b"done"
+    assert requested_paths == [f"/hop/{hop}" for hop in range(6)]
+
+
+def test_request_allowed_rejects_sixth_redirect() -> None:
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        hop = int(request.url.path.rsplit("/", 1)[-1])
+        return httpx.Response(302, headers={"Location": f"/hop/{hop + 1}"}, request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(FixsubError, match="exceeded 5 redirects"):
+        client._request_allowed("GET", "https://subhd.test/hop/0")
+
+    assert requested_paths == [f"/hop/{hop}" for hop in range(6)]
+
+
+def test_request_allowed_rejects_redirect_without_location() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(FixsubError, match="redirect omitted Location"):
+        client._request_allowed("GET", "https://subhd.test/start")
+
+
+def test_request_allowed_resolves_relative_redirect_location() -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        if request.url.path == "/files/start":
+            return httpx.Response(302, headers={"Location": "../final.zip"}, request=request)
+        return httpx.Response(200, content=b"done", request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    response = client._request_allowed("GET", "https://subhd.test/files/start")
+
+    assert response.content == b"done"
+    assert requested_urls == [
+        "https://subhd.test/files/start",
+        "https://subhd.test/final.zip",
+    ]
+
+
+@pytest.mark.parametrize("status_code", [301, 302, 303])
+def test_request_allowed_rewrites_post_redirect_to_bodyless_get(status_code: int) -> None:
+    requests: list[tuple[str, str, bytes]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path, request.content))
+        if request.url.path == "/start":
+            return httpx.Response(status_code, headers={"Location": "/final"}, request=request)
+        return httpx.Response(200, content=b"done", request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    response = client._request_allowed(
+        "POST",
+        "https://subhd.test/start",
+        json={"sid": "abc"},
+    )
+
+    assert response.content == b"done"
+    assert requests == [
+        ("POST", "/start", b'{"sid":"abc"}'),
+        ("GET", "/final", b""),
+    ]
+
+
+@pytest.mark.parametrize("status_code", [307, 308])
+def test_request_allowed_preserves_post_and_json_body(status_code: int) -> None:
+    requests: list[tuple[str, str, bytes]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path, request.content))
+        if request.url.path == "/start":
+            return httpx.Response(status_code, headers={"Location": "/final"}, request=request)
+        return httpx.Response(200, content=b"done", request=request)
+
+    client = SubhdClient(
+        base_url="https://subhd.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    response = client._request_allowed(
+        "POST",
+        "https://subhd.test/start",
+        json={"sid": "abc"},
+    )
+
+    assert response.content == b"done"
+    assert requests == [
+        ("POST", "/start", b'{"sid":"abc"}'),
+        ("POST", "/final", b'{"sid":"abc"}'),
+    ]
+
+
 def test_parse_search_response_extracts_subhd_results() -> None:
     results = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")
 
