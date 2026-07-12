@@ -148,14 +148,12 @@ class SubhdClient:
         response.raise_for_status()
         return parse_search_response(response.text, url)
 
-    def download(self, result: SearchResult, target_dir) -> DownloadedFile:
-        url = result.download_url or f"{self.base_url}/down/{result.result_id}"
-        headers = {"Referer": result.detail_url or f"{self.base_url}/a/{result.result_id}"}
-        response = self.http_client.get(url, headers=headers)
-        response.raise_for_status()
+    def _save_download(self, response: httpx.Response, result: SearchResult, target_dir) -> DownloadedFile:
         content_type = response.headers.get("Content-Type", "").lower()
+        if not response.content:
+            raise FixsubError(f"SubHD download returned an empty response: {response.request.url}")
         if _looks_like_html(response.content, content_type):
-            raise FixsubError(f"SubHD download returned HTML instead of a subtitle file: {url}")
+            raise FixsubError(f"SubHD download returned HTML instead of a subtitle file: {response.request.url}")
         suffix = _download_suffix(response.content, result, response)
         target_dir.mkdir(parents=True, exist_ok=True)
         safe_id = _safe_id(result.result_id)
@@ -167,3 +165,42 @@ class SubhdClient:
             path=target_path,
             source_url=str(response.request.url),
         )
+
+    def _api_download_url(self, result: SearchResult, gate_url: str) -> str:
+        api_url = f"{self.base_url}/api/sub/down"
+        response = self.http_client.post(
+            api_url,
+            json={"sid": result.result_id},
+            headers={"Referer": gate_url},
+        )
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise FixsubError("SubHD download API returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise FixsubError("SubHD download API returned invalid JSON")
+        if payload.get("success") is not True or payload.get("pass") is not True:
+            message = str(payload.get("msg") or "request rejected")
+            raise FixsubError(f"SubHD download API rejected the request: {message}")
+        download_url = payload.get("url")
+        if not isinstance(download_url, str) or not download_url.strip():
+            raise FixsubError("SubHD download API omitted a download URL")
+        return urljoin(api_url, download_url.strip())
+
+    def download(self, result: SearchResult, target_dir) -> DownloadedFile:
+        detail_url = result.detail_url or f"{self.base_url}/a/{result.result_id}"
+        detail_response = self.http_client.get(detail_url)
+        detail_response.raise_for_status()
+
+        gate_url = result.download_url or f"{self.base_url}/down/{result.result_id}"
+        gate_response = self.http_client.get(gate_url, headers={"Referer": detail_url})
+        gate_response.raise_for_status()
+        gate_content_type = gate_response.headers.get("Content-Type", "").lower()
+        if not _looks_like_html(gate_response.content, gate_content_type):
+            return self._save_download(gate_response, result, target_dir)
+
+        download_url = self._api_download_url(result, gate_url)
+        download_response = self.http_client.get(download_url)
+        download_response.raise_for_status()
+        return self._save_download(download_response, result, target_dir)

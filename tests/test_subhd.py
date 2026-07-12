@@ -51,11 +51,40 @@ def test_subhd_client_search_uses_encoded_query() -> None:
     assert [result.result_id for result in results] == ["kAqdvK"]
 
 
-def test_subhd_client_download_saves_archive(tmp_path: Path) -> None:
+def test_subhd_client_download_uses_session_api_and_saves_archive(tmp_path: Path) -> None:
+    requests: list[tuple[str, str]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "https://subhd.tv/down/kAqdvK"
-        assert request.headers["Referer"] == "https://subhd.tv/a/kAqdvK"
-        return httpx.Response(200, content=b"PK\x03\x04archive", request=request)
+        requests.append((request.method, str(request.url)))
+        if str(request.url) == "https://subhd.tv/a/kAqdvK":
+            return httpx.Response(
+                200,
+                text="<html>detail</html>",
+                headers={"Set-Cookie": "tk_download=ready; Path=/; HttpOnly"},
+                request=request,
+            )
+        if str(request.url) == "https://subhd.tv/down/kAqdvK":
+            assert "tk_download=ready" in request.headers.get("Cookie", "")
+            assert request.headers["Referer"] == "https://subhd.tv/a/kAqdvK"
+            return httpx.Response(200, text="<html>download gate</html>", request=request)
+        if str(request.url) == "https://subhd.tv/api/sub/down":
+            assert request.method == "POST"
+            assert "tk_download=ready" in request.headers.get("Cookie", "")
+            assert request.headers["Referer"] == "https://subhd.tv/down/kAqdvK"
+            assert request.content == b'{"sid":"kAqdvK"}'
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "msg": "验证通过",
+                    "pass": True,
+                    "url": "https://dl.subhd.me/subtitles/kAqdvK.zip",
+                },
+                request=request,
+            )
+        if str(request.url) == "https://dl.subhd.me/subtitles/kAqdvK.zip":
+            return httpx.Response(200, content=b"PK\x03\x04archive", request=request)
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
     client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
@@ -63,23 +92,65 @@ def test_subhd_client_download_saves_archive(tmp_path: Path) -> None:
     downloaded = client.download(result, tmp_path)
 
     assert downloaded.path.name == "subhd_kAqdvK.zip"
-    assert downloaded.path.read_bytes().startswith(b"PK")
+    assert downloaded.path.read_bytes() == b"PK\x03\x04archive"
+    assert downloaded.source_url == "https://dl.subhd.me/subtitles/kAqdvK.zip"
+    assert requests == [
+        ("GET", "https://subhd.tv/a/kAqdvK"),
+        ("GET", "https://subhd.tv/down/kAqdvK"),
+        ("POST", "https://subhd.tv/api/sub/down"),
+        ("GET", "https://dl.subhd.me/subtitles/kAqdvK.zip"),
+    ]
 
 
-def test_subhd_client_download_rejects_html_response(tmp_path: Path) -> None:
+def test_subhd_client_download_accepts_legacy_direct_archive(tmp_path: Path) -> None:
+    requested_urls: list[str] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, text="<html>challenge</html>", headers={"Content-Type": "text/html"}, request=request)
+        requested_urls.append(str(request.url))
+        if str(request.url) == "https://subhd.tv/a/kAqdvK":
+            return httpx.Response(200, text="<html>detail</html>", request=request)
+        if str(request.url) == "https://subhd.tv/down/kAqdvK":
+            return httpx.Response(200, content=b"PK\x03\x04legacy", request=request)
+        raise AssertionError(f"Unexpected request: {request.url}")
 
     client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
 
-    with pytest.raises(FixsubError, match="SubHD download returned HTML"):
-        client.download(result, tmp_path)
+    downloaded = client.download(result, tmp_path)
+
+    assert downloaded.path.read_bytes() == b"PK\x03\x04legacy"
+    assert requested_urls == [
+        "https://subhd.tv/a/kAqdvK",
+        "https://subhd.tv/down/kAqdvK",
+    ]
 
 
-def test_subhd_client_download_rejects_html_like_script_response(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("final_content", "final_headers"),
+    [
+        (b"<html>challenge</html>", {"Content-Type": "text/html"}),
+        (b"\xef\xbb\xbf<script>challenge()</script>", {}),
+    ],
+)
+def test_subhd_client_download_rejects_html_final_response(
+    tmp_path: Path,
+    final_content: bytes,
+    final_headers: dict[str, str],
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b"\xef\xbb\xbf<script>challenge()</script>", request=request)
+        if request.url.path == "/a/kAqdvK":
+            return httpx.Response(200, text="<html>detail</html>", request=request)
+        if request.url.path == "/down/kAqdvK":
+            return httpx.Response(200, text="<html>download gate</html>", request=request)
+        if request.url.path == "/api/sub/down":
+            return httpx.Response(
+                200,
+                json={"success": True, "pass": True, "url": "https://dl.subhd.me/result.srt"},
+                request=request,
+            )
+        if str(request.url) == "https://dl.subhd.me/result.srt":
+            return httpx.Response(200, content=final_content, headers=final_headers, request=request)
+        raise AssertionError(f"Unexpected request: {request.url}")
 
     client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
@@ -90,7 +161,11 @@ def test_subhd_client_download_rejects_html_like_script_response(tmp_path: Path)
 
 def test_subhd_client_download_sniffs_plain_srt_content(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b"1\n00:00:01,000 --> 00:00:02,000\nHi\n", request=request)
+        if request.url.path == "/a/kAqdvK":
+            return httpx.Response(200, text="<html>detail</html>", request=request)
+        if request.url.path == "/down/kAqdvK":
+            return httpx.Response(200, content=b"1\n00:00:01,000 --> 00:00:02,000\nHi\n", request=request)
+        raise AssertionError(f"Unexpected request: {request.url}")
 
     client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     result = parse_search_response(SEARCH_HTML.replace("SRT", "字幕"), "https://subhd.tv/search/Nell%201994")[0]
