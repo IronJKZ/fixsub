@@ -150,6 +150,8 @@ class SubhdClient:
 
     def _save_download(self, response: httpx.Response, result: SearchResult, target_dir) -> DownloadedFile:
         content_type = response.headers.get("Content-Type", "").lower()
+        if not response.content:
+            raise FixsubError(f"SubHD download returned an empty response: {response.request.url}")
         if _looks_like_html(response.content, content_type):
             raise FixsubError(f"SubHD download returned HTML instead of a subtitle file: {response.request.url}")
         suffix = _download_suffix(response.content, result, response)
@@ -172,7 +174,19 @@ class SubhdClient:
             headers={"Referer": gate_url},
         )
         response.raise_for_status()
-        return urljoin(api_url, response.json()["url"])
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise FixsubError("SubHD download API returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise FixsubError("SubHD download API returned invalid JSON")
+        if payload.get("success") is not True or payload.get("pass") is not True:
+            message = str(payload.get("msg") or "request rejected")
+            raise FixsubError(f"SubHD download API rejected the request: {message}")
+        download_url = payload.get("url")
+        if not isinstance(download_url, str) or not download_url.strip():
+            raise FixsubError("SubHD download API omitted a download URL")
+        return urljoin(api_url, download_url.strip())
 
     def download(self, result: SearchResult, target_dir) -> DownloadedFile:
         detail_url = result.detail_url or f"{self.base_url}/a/{result.result_id}"

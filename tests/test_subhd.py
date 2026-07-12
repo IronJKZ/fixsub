@@ -125,6 +125,89 @@ def test_subhd_client_download_accepts_legacy_direct_archive(tmp_path: Path) -> 
     ]
 
 
+def test_subhd_client_download_rejects_empty_final_response(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a/kAqdvK":
+            return httpx.Response(200, text="<html>detail</html>", request=request)
+        if request.url.path == "/down/kAqdvK":
+            return httpx.Response(200, text="<html>download gate</html>", request=request)
+        if request.url.path == "/api/sub/down":
+            return httpx.Response(
+                200,
+                json={"success": True, "pass": True, "url": "https://dl.subhd.me/result.srt"},
+                request=request,
+            )
+        if str(request.url) == "https://dl.subhd.me/result.srt":
+            return httpx.Response(200, content=b"", request=request)
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="empty response"):
+        client.download(result, tmp_path)
+
+
+def test_subhd_client_download_api_rejects_invalid_json() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not JSON", request=request)
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="invalid JSON"):
+        client._api_download_url(result, "https://subhd.tv/down/kAqdvK")
+
+
+def test_subhd_client_download_api_rejects_non_object_json() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[], request=request)
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="invalid JSON"):
+        client._api_download_url(result, "https://subhd.tv/down/kAqdvK")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"success": False, "pass": True, "msg": "验证码失效"},
+        {"success": True, "pass": False, "msg": "验证码失效"},
+    ],
+)
+def test_subhd_client_download_api_preserves_rejection_message(payload: dict[str, object]) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload, request=request)
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="验证码失效"):
+        client._api_download_url(result, "https://subhd.tv/down/kAqdvK")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"success": True, "pass": True},
+        {"success": True, "pass": True, "url": None},
+        {"success": True, "pass": True, "url": ""},
+        {"success": True, "pass": True, "url": "  "},
+    ],
+)
+def test_subhd_client_download_api_rejects_omitted_url(payload: dict[str, object]) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload, request=request)
+
+    client = SubhdClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = parse_search_response(SEARCH_HTML, "https://subhd.tv/search/Nell%201994")[0]
+
+    with pytest.raises(FixsubError, match="omitted a download URL"):
+        client._api_download_url(result, "https://subhd.tv/down/kAqdvK")
+
+
 @pytest.mark.parametrize(
     ("final_content", "final_headers"),
     [
