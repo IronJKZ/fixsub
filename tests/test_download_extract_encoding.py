@@ -161,14 +161,16 @@ def test_extract_rar_uses_verified_tar_bsdtar_fallback(
             return "/usr/bin/tar"
         return None
 
-    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        command: list[str], **_: object
+    ) -> subprocess.CompletedProcess[bytes] | subprocess.CompletedProcess[str]:
         commands.append(command)
         if command[-1] == "--version":
             return subprocess.CompletedProcess(
                 command,
                 0,
-                stdout="bsdtar 3.5.3",
-                stderr="",
+                stdout=b"bsdtar 3.5.3",
+                stderr=b"",
             )
         extract_dir = Path(command[command.index("-C") + 1])
         (extract_dir / "movie.srt").write_text("subtitle", encoding="utf-8")
@@ -187,6 +189,46 @@ def test_extract_rar_uses_verified_tar_bsdtar_fallback(
     assert extracted == [out_dir / "movie.srt"]
 
 
+def test_extract_rar_recognizes_bsdtar_in_undecodable_probe_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "subs.rar"
+    out_dir = tmp_path / "out"
+    archive.write_bytes(b"archive")
+    commands: list[list[str]] = []
+
+    def fake_which(command: str) -> str | None:
+        if command == "tar":
+            return "/usr/bin/tar"
+        return None
+
+    def fake_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes] | subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[-1] == "--version":
+            assert kwargs.get("text") is not True
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=b"\xffBSDTAR 3.5.3",
+                stderr=b"\xfe",
+            )
+        extract_dir = Path(command[command.index("-C") + 1])
+        (extract_dir / "movie.srt").write_text("subtitle", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fixsub.extract.shutil.which", fake_which)
+    monkeypatch.setattr("fixsub.extract.subprocess.run", fake_run)
+
+    extracted = extract_archive(archive, out_dir)
+
+    assert commands[0] == ["/usr/bin/tar", "--version"]
+    assert commands[1][:4] == ["/usr/bin/tar", "-xf", str(archive), "-C"]
+    assert Path(commands[1][4]).parent == out_dir
+    assert extracted == [out_dir / "movie.srt"]
+
+
 def test_extract_rar_rejects_non_bsdtar_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -199,13 +241,13 @@ def test_extract_rar_rejects_non_bsdtar_fallback(
             return "/usr/bin/tar"
         return None
 
-    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
         commands.append(command)
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout="tar (GNU tar) 1.35",
-            stderr="",
+            stdout=b"tar (GNU tar) 1.35",
+            stderr=b"",
         )
 
     monkeypatch.setattr("fixsub.extract.shutil.which", fake_which)
@@ -235,14 +277,16 @@ def test_extract_rar_ignores_failed_bsdtar_probe_and_tries_next_candidate(
             "tar": "/usr/bin/tar",
         }.get(command)
 
-    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        command: list[str], **_: object
+    ) -> subprocess.CompletedProcess[bytes] | subprocess.CompletedProcess[str]:
         commands.append(command)
         if command == ["/usr/local/bin/bsdtar", "--version"]:
             if failure_mode == "exception":
                 raise OSError("probe failed")
-            return subprocess.CompletedProcess(command, 1, stdout="bsdtar", stderr="failed")
+            return subprocess.CompletedProcess(command, 1, stdout=b"bsdtar", stderr=b"failed")
         if command == ["/usr/bin/tar", "--version"]:
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="BSDTAR 3.5.3")
+            return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"BSDTAR 3.5.3")
         extract_dir = Path(command[command.index("-C") + 1])
         (extract_dir / "movie.srt").write_text("subtitle", encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")

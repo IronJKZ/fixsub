@@ -80,12 +80,11 @@ def _find_bsdtar() -> str | None:
                 [tool, "--version"],
                 check=False,
                 capture_output=True,
-                text=True,
             )
         except (OSError, subprocess.SubprocessError):
             continue
-        output = f"{version.stdout or ''}\n{version.stderr or ''}"
-        if version.returncode == 0 and "bsdtar" in output.lower():
+        output = (version.stdout or b"") + b"\n" + (version.stderr or b"")
+        if version.returncode == 0 and b"bsdtar" in output.lower():
             return tool
     return None
 
