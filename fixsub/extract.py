@@ -70,6 +70,26 @@ def _copy_current_subtitle_files(source_dir: Path, output_dir: Path) -> list[Pat
     return sorted(copied)
 
 
+def _find_bsdtar() -> str | None:
+    for candidate in ("bsdtar", "tar"):
+        tool = shutil.which(candidate)
+        if not tool:
+            continue
+        try:
+            version = subprocess.run(
+                [tool, "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        output = f"{version.stdout or ''}\n{version.stderr or ''}"
+        if version.returncode == 0 and "bsdtar" in output.lower():
+            return tool
+    return None
+
+
 def extract_archive(archive_path: Path, output_dir: Path) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     suffix = archive_path.suffix.lower()
@@ -83,15 +103,25 @@ def extract_archive(archive_path: Path, output_dir: Path) -> list[Path]:
         return _extract_zip(archive_path, output_dir)
     if suffix == ".7z":
         tool = shutil.which("unar")
+        extractor = "unar"
     else:
-        tool = shutil.which("unar") or shutil.which("unrar")
+        tool = shutil.which("unar")
+        extractor = "unar"
+        if not tool:
+            tool = shutil.which("unrar")
+            extractor = "unrar"
+        if not tool:
+            tool = _find_bsdtar()
+            extractor = "bsdtar"
     if not tool:
         raise MissingDependencyError("unar", "brew install unar")
     with tempfile.TemporaryDirectory(dir=output_dir) as extract_dir_name:
         extract_dir = Path(extract_dir_name)
-        if Path(tool).name == "unar":
+        if extractor == "unar":
             command = [tool, "-o", str(extract_dir), str(archive_path)]
-        else:
+        elif extractor == "unrar":
             command = [tool, "x", str(archive_path), str(extract_dir)]
+        else:
+            command = [tool, "-xf", str(archive_path), "-C", str(extract_dir)]
         subprocess.run(command, check=True, capture_output=True, text=True)
         return _copy_current_subtitle_files(extract_dir, output_dir)

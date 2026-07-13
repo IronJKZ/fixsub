@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -101,8 +102,10 @@ def test_extract_direct_subtitle_uses_collision_safe_name(tmp_path: Path) -> Non
 def test_extract_7z_requires_unar_when_only_unrar_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     archive = tmp_path / "subs.7z"
     archive.write_bytes(b"archive")
+    probes: list[str] = []
 
     def fake_which(command: str) -> str | None:
+        probes.append(command)
         if command == "unrar":
             return "/usr/bin/unrar"
         return None
@@ -113,6 +116,7 @@ def test_extract_7z_requires_unar_when_only_unrar_exists(tmp_path: Path, monkeyp
         extract_archive(archive, tmp_path / "out")
 
     assert error.value.command == "unar"
+    assert probes == ["unar"]
 
 
 def test_extract_rar_may_use_unrar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,8 +124,10 @@ def test_extract_rar_may_use_unrar(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     out_dir = tmp_path / "out"
     archive.write_bytes(b"archive")
     commands: list[list[str]] = []
+    probes: list[str] = []
 
     def fake_which(command: str) -> str | None:
+        probes.append(command)
         if command == "unrar":
             return "/usr/bin/unrar"
         return None
@@ -138,6 +144,119 @@ def test_extract_rar_may_use_unrar(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     extracted = extract_archive(archive, out_dir)
 
     assert commands[0][:3] == ["/usr/bin/unrar", "x", str(archive)]
+    assert probes == ["unar", "unrar"]
+    assert extracted == [out_dir / "movie.srt"]
+
+
+def test_extract_rar_uses_verified_tar_bsdtar_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "subs.rar"
+    out_dir = tmp_path / "out"
+    archive.write_bytes(b"archive")
+    commands: list[list[str]] = []
+
+    def fake_which(command: str) -> str | None:
+        if command == "tar":
+            return "/usr/bin/tar"
+        return None
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="bsdtar 3.5.3",
+                stderr="",
+            )
+        extract_dir = Path(command[command.index("-C") + 1])
+        (extract_dir / "movie.srt").write_text("subtitle", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fixsub.extract.shutil.which", fake_which)
+    monkeypatch.setattr("fixsub.extract.subprocess.run", fake_run)
+
+    extracted = extract_archive(archive, out_dir)
+
+    assert commands[0] == ["/usr/bin/tar", "--version"]
+    extract_command = commands[1]
+    assert extract_command[:3] == ["/usr/bin/tar", "-xf", str(archive)]
+    assert extract_command[3] == "-C"
+    assert Path(extract_command[4]).parent == out_dir
+    assert extracted == [out_dir / "movie.srt"]
+
+
+def test_extract_rar_rejects_non_bsdtar_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "subs.rar"
+    archive.write_bytes(b"archive")
+    commands: list[list[str]] = []
+
+    def fake_which(command: str) -> str | None:
+        if command == "tar":
+            return "/usr/bin/tar"
+        return None
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="tar (GNU tar) 1.35",
+            stderr="",
+        )
+
+    monkeypatch.setattr("fixsub.extract.shutil.which", fake_which)
+    monkeypatch.setattr("fixsub.extract.subprocess.run", fake_run)
+
+    with pytest.raises(MissingDependencyError) as error:
+        extract_archive(archive, tmp_path / "out")
+
+    assert error.value.command == "unar"
+    assert commands == [["/usr/bin/tar", "--version"]]
+
+
+@pytest.mark.parametrize("failure_mode", ["nonzero", "exception"])
+def test_extract_rar_ignores_failed_bsdtar_probe_and_tries_next_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+) -> None:
+    archive = tmp_path / "subs.rar"
+    out_dir = tmp_path / "out"
+    archive.write_bytes(b"archive")
+    commands: list[list[str]] = []
+
+    def fake_which(command: str) -> str | None:
+        return {
+            "bsdtar": "/usr/local/bin/bsdtar",
+            "tar": "/usr/bin/tar",
+        }.get(command)
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command == ["/usr/local/bin/bsdtar", "--version"]:
+            if failure_mode == "exception":
+                raise OSError("probe failed")
+            return subprocess.CompletedProcess(command, 1, stdout="bsdtar", stderr="failed")
+        if command == ["/usr/bin/tar", "--version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="BSDTAR 3.5.3")
+        extract_dir = Path(command[command.index("-C") + 1])
+        (extract_dir / "movie.srt").write_text("subtitle", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fixsub.extract.shutil.which", fake_which)
+    monkeypatch.setattr("fixsub.extract.subprocess.run", fake_run)
+
+    extracted = extract_archive(archive, out_dir)
+
+    assert commands[:2] == [
+        ["/usr/local/bin/bsdtar", "--version"],
+        ["/usr/bin/tar", "--version"],
+    ]
+    assert commands[2][:3] == ["/usr/bin/tar", "-xf", str(archive)]
     assert extracted == [out_dir / "movie.srt"]
 
 
