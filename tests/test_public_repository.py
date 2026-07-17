@@ -63,3 +63,53 @@ def test_private_and_generated_files_are_ignored() -> None:
 def test_setup_py_delegates_metadata_to_pyproject() -> None:
     setup_py = _read("setup.py")
     assert setup_py == "from setuptools import setup\n\n\nsetup()\n"
+
+
+def test_bilingual_readmes_cover_usage_security_and_development() -> None:
+    english = _read("README.md")
+    chinese = _read("README.zh-CN.md")
+
+    assert "[简体中文](README.zh-CN.md)" in english
+    assert "[English](README.md)" in chinese
+    for heading in (
+        "## Features",
+        "## Requirements",
+        "## Installation",
+        "## Authentication",
+        "## Usage",
+        "## Output and backups",
+        "## Privacy and security",
+        "## Troubleshooting",
+        "## Development",
+        "## Current limitations",
+    ):
+        assert heading in english
+    for heading in (
+        "## 功能",
+        "## 系统要求",
+        "## 安装",
+        "## 身份验证",
+        "## 使用方式",
+        "## 输出与备份",
+        "## 隐私与安全",
+        "## 故障排查",
+        "## 开发",
+        "## 当前限制",
+    ):
+        assert heading in chinese
+    for command in (
+        "fixsub auth set",
+        "fixsub --dry-run",
+        "fixsub --providers subhd",
+        "fixsub --providers assrt,subhd",
+        "fixsub --audio a:0",
+        "fixsub --no-sync",
+        "fixsub adjust --seconds 1.0",
+        "fixsub --debug",
+    ):
+        assert command in english
+        assert command in chinese
+    for warning in ("ASSRT_TOKEN", ".fixsub/logs/fixsub.log", ".fixsub/metadata/results.json"):
+        assert warning in english
+        assert warning in chinese
+    assert "/Users/" not in english + chinese

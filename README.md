@@ -1,195 +1,187 @@
 # fixsub
 
-`fixsub` is a macOS-first CLI for on-demand Chinese subtitle search, validation, sync, and application inside one movie folder.
+[简体中文](README.zh-CN.md)
 
-The M1 MVP is designed for the common local workflow: open a folder that contains one movie file, run `fixsub`, and get an Infuse-compatible Chinese subtitle written next to the video.
+`fixsub` is a macOS-first command-line tool that finds, validates, synchronizes, and applies Chinese subtitles for a movie stored in a local folder.
 
-## Provider Support
+> Status: `0.1.0` is an early public release. Use `--dry-run` first with valuable media libraries.
 
-`fixsub` supports these subtitle sources:
+## Features
 
-- ASSRT official API search through `ASSRT_TOKEN`
-- ASSRT public web download fallback when the API search result download returns `404`
-- SubHD public search through `https://subhd.tv/search/<query>`
+- Searches ASSRT and SubHD for Chinese subtitle candidates for the video in the current folder.
+- Downloads and extracts supported subtitle files, then normalizes them to UTF-8.
+- Uses `ffprobe` to choose a reference audio stream and can validate timing with `ffsubsync`.
+- Ranks candidates, preserves an existing final subtitle before replacement, and writes an Infuse-compatible Chinese subtitle beside the video.
+- Records runtime artifacts and diagnostics under `.fixsub/` so a run can be inspected afterwards.
 
-The default provider list is:
+## How it works
 
-```bash
-fixsub --providers assrt,subhd
-```
+Run `fixsub` from a folder containing the target movie. The tool detects a supported local video, derives search queries, asks the enabled providers for results, downloads and extracts up to the selected number of candidates, and normalizes subtitle text to UTF-8. It probes the video's audio, rejects non-Chinese candidates, validates and optionally synchronizes candidates, ranks the decisions, backs up any previous final subtitle, and writes `<video_stem>.zh.<ext>` when a suitable result is found.
 
-If `ASSRT_TOKEN` is missing, ASSRT is skipped when another provider is enabled. If you explicitly run `fixsub --providers assrt` without `ASSRT_TOKEN`, the command stops and asks for the token.
+This is a one-movie-folder workflow. If the folder contains more than one supported video, the largest file is selected; use a dedicated folder when that is not the intended movie.
 
-## M1 Support
+## Requirements
 
-M1 supports:
+- macOS and Python 3.11 or later.
+- Homebrew tools for media probing and archive extraction:
 
-- Video detection in the current folder
-- ASSRT search and download, including web fallback for stale API download links
-- SubHD search and download
-- Archive extraction for `.zip`, `.rar`, and `.7z`
-- Subtitle normalization to UTF-8
-- Audio detection through `ffprobe`
-- Optional sync through `ffsubsync`
-- Original-vs-synced scoring and comparison
-- Infuse-compatible output naming
+  ```bash
+  brew install ffmpeg unar
+  ```
 
-M1 does not implement interactive mode, library scanning, Whisper generation, translation, or a Web UI.
+- Optional audio synchronization support:
 
-## Install
+  ```bash
+  python3 -m pip install ffsubsync
+  ```
 
-Install the Python package in editable mode:
+`ffprobe` is supplied by `ffmpeg`. `unar` handles `.rar` and `.7z` archives; `.zip` extraction is built in. `fixsub` is macOS-first and does not make non-macOS compatibility guarantees.
+
+## Installation
+
+Install from a source checkout in editable mode:
 
 ```bash
 python3 -m pip install -e ".[dev]"
 ```
 
-Install the required macOS tools:
+No PyPI package is published. Install the required macOS tools from the Requirements section, and install `ffsubsync` when you want audio-based synchronization rather than the deliberately riskier `--no-sync` mode.
 
-```bash
-brew install ffmpeg unar
-```
+## Authentication
 
-Install optional subtitle sync support:
-
-```bash
-python3 -m pip install ffsubsync
-```
-
-Configure ASSRT API access:
+ASSRT uses a token. Store it in the macOS Keychain with:
 
 ```bash
 fixsub auth set
 ```
 
-The command securely prompts once and stores the token in macOS Keychain. Check or remove it with `fixsub auth status` and `fixsub auth delete`. `ASSRT_TOKEN` remains supported and takes precedence when set for a single shell or automation job.
+Check the configured source or remove the stored Keychain token with:
 
-ASSRT is optional when SubHD is enabled, but recommended because it gives `fixsub` another source to compare.
+```bash
+fixsub auth status
+fixsub auth delete
+```
+
+macOS Keychain is the preferred persistent store. A temporary `ASSRT_TOKEN` environment variable overrides the Keychain value, which is useful for a single shell or automation job. Keep the token out of shell history, issue reports, logs, and committed files. ASSRT is skipped when no token is available and SubHD is also enabled; `fixsub --providers assrt` instead stops and asks for credentials.
 
 ## Usage
 
-Run `fixsub` from inside a movie folder. M1 expects the current folder to contain the target movie file.
-
-Basic run:
+From a folder containing a movie, run:
 
 ```bash
 fixsub
 ```
 
-Preview what would happen without replacing or writing the final subtitle:
+The default provider set is ASSRT plus SubHD. A final subtitle is written only when the selected candidate is not poor; otherwise inspect the saved candidates and diagnostics.
+
+### Safe preview
 
 ```bash
 fixsub --dry-run
 ```
 
-Select a specific audio stream for sync:
+`--dry-run` performs searching, downloading, extraction, probing, validation, and synchronization, and writes `.fixsub/` artifacts, but does not write or replace the final subtitle next to the video. It is the recommended first command for valuable libraries; provider requests and local runtime files still occur.
+
+### Provider selection
+
+```bash
+fixsub --providers subhd
+fixsub --providers assrt,subhd
+```
+
+Use `fixsub --providers subhd` to avoid ASSRT credentials. Use `fixsub --providers assrt,subhd` to explicitly select both providers (also the default). Provider search or download failures are logged and the run can continue with other available providers, but provider outages can leave no usable candidate.
+
+### Audio and synchronization
 
 ```bash
 fixsub --audio a:0
+fixsub --no-sync
 ```
 
-Fine-tune an existing final subtitle without searching or running ffsubsync again. Positive values delay subtitles; negative values advance them:
+By default, `fixsub` probes audio with `ffprobe`, selects a reference stream, and tries `ffsubsync` for each candidate. `fixsub --audio a:0` forces the stream passed to `ffsubsync`. `fixsub --no-sync` skips audio synchronization and ranks original candidates only; use it only when necessary because structural timestamp checks cannot establish dialogue or audio alignment. A failed or low-quality synchronization makes a candidate poor and prevents automatic application.
+
+### Candidate and language controls
+
+```bash
+fixsub --max-candidates 5
+fixsub --lang zh-Hans
+```
+
+`--max-candidates` limits downloads after search ranking (the default is `5`), which controls run time and provider traffic. `--lang` controls the final subtitle suffix; the default `zh` produces `<video_stem>.zh.<ext>`, while `zh-Hans` is available when that tag is required by the media library.
+
+### Manual timing adjustment
 
 ```bash
 fixsub adjust --seconds 1.0
 fixsub adjust --seconds -1.0
 ```
 
-The existing final subtitle is backed up under `.fixsub/original/`, and the adjustment is recorded in `.fixsub/metadata/adjustment.json`.
+`adjust` shifts the detected final subtitle without searching or running synchronization again. Positive seconds delay subtitle cues and negative seconds advance them. The command backs up the replaced final subtitle under `.fixsub/original/` and records the adjustment in `.fixsub/metadata/adjustment.json`; verify the result in your player before keeping the change.
 
-Inspect candidates without audio validation or subtitle sync:
-
-```bash
-fixsub --no-sync
-```
-
-The reported timeline score only checks whether subtitle timestamps look structurally plausible within the video duration. It does not prove that the dialogue matches the movie or that the timing matches the audio. Unless `--no-sync` is explicit, every candidate must pass ffsubsync audio validation before it can be applied automatically.
-
-Limit the number of candidates:
-
-```bash
-fixsub --max-candidates 5
-```
-
-The default output tag is `zh`, which Infuse recognizes reliably. Override it when needed:
-
-```bash
-fixsub --lang zh-Hans
-```
-
-Use only SubHD:
-
-```bash
-fixsub --providers subhd
-```
-
-Use ASSRT and SubHD:
-
-```bash
-fixsub --providers assrt,subhd
-```
-
-Use only ASSRT:
-
-```bash
-fixsub --providers assrt
-```
-
-Preview a real movie folder with more candidates:
-
-```bash
-fixsub --dry-run --max-candidates 20
-```
-
-Print detailed diagnostic output:
+### Diagnostics
 
 ```bash
 fixsub --debug
 ```
 
-Supported M1 options:
+`--debug` is accepted and recorded in the run options inside `.fixsub/metadata/results.json`. In this early release it does not add separate verbose console output, so inspect that metadata file and `.fixsub/logs/fixsub.log` for diagnostics. Treat both files as private run data before sharing them.
 
-- `--dry-run`
-- `--audio a:0`
-- `--no-sync`
-- `--max-candidates 5`
-- `--lang zh` (default; use `--lang zh-Hans` to override)
-- `--providers assrt,subhd`
-- `--debug`
+## Output and backups
 
-## Output
-
-The final subtitle is written next to the detected video using Infuse-compatible naming:
+The applied subtitle is written beside the detected video as:
 
 ```text
 <video_stem>.zh.<ext>
 ```
 
-When an existing final subtitle would be replaced, it is backed up first:
+Each run creates or reuses these local working paths:
 
-```text
-.fixsub/original/<timestamp>.<filename>
+- `.fixsub/downloads/` holds downloaded provider files.
+- `.fixsub/candidates/` holds extracted, UTF-8-normalized subtitle candidates.
+- `.fixsub/synced/` holds subtitle files produced by successful synchronization.
+- `.fixsub/original/` holds timestamped backups before a final subtitle is replaced, including by `adjust`.
+- `.fixsub/logs/fixsub.log` records provider and run diagnostics.
+- `.fixsub/metadata/results.json` records the video, options, queries, downloads, candidates, decisions, selected audio, output path, and result message.
+
+## Privacy and security
+
+Use `fixsub auth set` rather than placing an ASSRT token in project files. `ASSRT_TOKEN` is supported for temporary use and takes precedence over Keychain, but it is still a secret. The log writer redacts the active token from messages, yet logs and metadata can contain movie filenames, provider data, and local paths.
+
+Before opening an issue, remove `.fixsub/logs/fixsub.log`, `.fixsub/metadata/results.json`, downloaded data, and every token or private path unless the information is necessary and has been carefully sanitized. Never paste credentials into an issue, command transcript, or screenshot.
+
+## Troubleshooting
+
+- **`ffprobe` is missing:** install it with `brew install ffmpeg`, then ensure Homebrew's binaries are on your `PATH`.
+- **A `.rar` or `.7z` archive cannot be extracted:** install archive support with `brew install unar` and retry. `.zip` files do not need `unar`.
+- **ASSRT reports missing credentials:** run `fixsub auth set`, check `fixsub auth status`, or set a temporary `ASSRT_TOKEN`. Use `fixsub --providers subhd` if you do not intend to use ASSRT.
+- **A provider is unavailable or no candidate is found:** retry later, select another provider, and inspect `.fixsub/logs/fixsub.log`; provider results and downloads can change independently of the tool.
+- **Candidates are rejected as low confidence:** inspect `.fixsub/candidates/` and `.fixsub/metadata/results.json`. Low structural timing scores or failed synchronization intentionally prevent automatic output.
+- **Synchronization fails:** install `ffsubsync`, confirm `ffprobe` can read the video, choose the correct stream with `fixsub --audio a:0`, and inspect the log. `fixsub --no-sync` is available only as a manual-risk fallback.
+
+## Development
+
+Run the test suite with:
+
+```bash
+.venv/bin/python -m pytest -q
 ```
 
-Runtime artifacts are written under `.fixsub/`:
+Build a distribution artifact locally with:
 
-- `.fixsub/downloads/`
-- `.fixsub/candidates/`
-- `.fixsub/synced/`
-- `.fixsub/logs/fixsub.log`
-- `.fixsub/metadata/results.json`
+```bash
+python -m build
+```
 
-Provider failures are recorded in `.fixsub/logs/fixsub.log`. ASSRT tokens are redacted before log lines are written.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor workflow, testing, and privacy expectations. Building locally does not publish a package.
 
-## Manual Acceptance Checklist
+## Current limitations
 
-1. Put one movie file in a local test folder.
-2. Run `fixsub --dry-run`.
-3. Confirm `.fixsub/metadata/results.json` is written.
-4. Run `fixsub` with a movie that has ASSRT Chinese subtitles.
-5. Confirm selected audio is printed as `a:0`, `a:1`, or another ffsubsync stream id.
-6. Confirm every candidate attempts ffsubsync unless `--no-sync` is explicit.
-7. Confirm `results.json` records the ffsubsync score, offset, and framerate scale.
-8. Confirm a low-quality or unchanged ffsubsync result is rejected even when the original timeline score is `1.00`.
-9. Confirm the selected candidate reports `selected_version: "synced"` before automatic output.
-10. Confirm existing final subtitles are backed up before replacement.
+Interactive mode, library scanning, Whisper subtitle generation, translation, and a Web UI are not implemented. There are no non-macOS compatibility guarantees and no PyPI distribution. Candidate ranking and synchronization reduce risk, but automatic perfect dialogue matching is not implemented or guaranteed.
+
+## Contributing and security
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before contributing. Report security concerns through [SECURITY.md](SECURITY.md), not in a public issue. Release history is in [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
