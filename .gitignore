@@ -1,6 +1,32 @@
-.worktrees
-.DS_Store
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+
+# fixsub runtime data (may contain local paths or provider responses)
+.fixsub/
+
+# Python environments and caches
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Packaging output
+build/
+dist/
 *.egg-info/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+
+# Local worktrees
+.worktrees/
