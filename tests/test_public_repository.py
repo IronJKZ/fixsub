@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -9,6 +11,43 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_tracked_text_contains_no_personal_absolute_paths() -> None:
+    tracked_output = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
+    patterns = (
+        re.compile("/" + "Users" + r"/[A-Za-z0-9._-]+/"),
+        re.compile("/" + "home" + r"/[A-Za-z0-9._-]+/"),
+        re.compile(
+            r"[A-Za-z]:"
+            + re.escape("\\")
+            + "Users"
+            + re.escape("\\")
+            + r"[A-Za-z0-9._-]+"
+            + re.escape("\\")
+        ),
+    )
+    offenders: list[str] = []
+
+    for raw_path in tracked_output.split(b"\0"):
+        if not raw_path:
+            continue
+        relative_path = raw_path.decode("utf-8", errors="surrogateescape")
+        try:
+            contents = (ROOT / relative_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if any(pattern.search(contents) for pattern in patterns):
+            offenders.append(relative_path)
+
+    assert not offenders, "tracked files contain personal absolute paths: " + ", ".join(
+        sorted(offenders)
+    )
 
 
 def test_public_package_metadata_is_complete() -> None:
