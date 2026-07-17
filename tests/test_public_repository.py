@@ -129,3 +129,36 @@ def test_bilingual_readmes_describe_pipeline_order_and_candidate_limits() -> Non
     assert "向启用的字幕源请求结果、对结果排序、探测并选择参考音轨，然后下载、解压并规范化字幕文件。" in chinese
     assert "`--max-candidates` 会限制从排序后的字幕源结果中选取用于下载的项目" in chinese
     assert "一个下载的压缩包可能包含多个字幕文件，因此解压出的候选项数量可能超过该值。" in chinese
+
+
+def test_community_health_files_define_safe_contribution_paths() -> None:
+    contributing = _read("CONTRIBUTING.md")
+    conduct = _read("CODE_OF_CONDUCT.md")
+    security = _read("SECURITY.md")
+    pull_request = _read(".github/pull_request_template.md")
+
+    assert "## Development setup" in contributing
+    assert ".venv/bin/python -m pytest -q" in contributing
+    assert "Do not include" in contributing and "token" in contributing.lower()
+    assert "Contributor Covenant" in conduct
+    assert "security/advisories/new" in conduct
+    assert "## Supported versions" in security
+    assert "security/advisories/new" in security
+    assert "Do not open a public issue" in security
+    assert "Security and privacy" in pull_request
+    assert "Tests" in pull_request
+
+
+def test_issue_forms_are_structured_and_warn_about_sensitive_data() -> None:
+    bug = _read(".github/ISSUE_TEMPLATE/bug_report.yml")
+    feature = _read(".github/ISSUE_TEMPLATE/feature_request.yml")
+    config = _read(".github/ISSUE_TEMPLATE/config.yml")
+
+    assert "name: Bug report" in bug
+    assert "type: textarea" in bug
+    assert "ASSRT token" in bug
+    assert "movie filenames" in bug
+    assert "name: Feature request" in feature
+    assert "alternatives" in feature.lower()
+    assert "blank_issues_enabled: false" in config
+    assert "security/advisories/new" in config

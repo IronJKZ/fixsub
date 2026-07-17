@@ -1,0 +1,93 @@
+name: Bug report
+description: Report a reproducible problem with fixsub.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Do not use this form for a private vulnerability; use GitHub private vulnerability reporting instead.
+        Do not include ASSRT tokens, credentials, private movie filenames, personal paths, or unsanitized metadata.
+  - type: checkboxes
+    id: not-a-vulnerability
+    attributes:
+      label: Security acknowledgement
+      options:
+        - label: This is not a private vulnerability report.
+          required: true
+  - type: input
+    id: fixsub-version
+    attributes:
+      label: fixsub version or commit
+      description: Include the installed version or the relevant commit identifier.
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+    validations:
+      required: true
+  - type: input
+    id: install-method
+    attributes:
+      label: Install method
+      description: For example, editable install or a local build.
+    validations:
+      required: true
+  - type: input
+    id: providers
+    attributes:
+      label: Enabled providers
+    validations:
+      required: true
+  - type: dropdown
+    id: ffsubsync
+    attributes:
+      label: ffsubsync
+      description: Indicate whether ffsubsync is installed.
+      options:
+        - Installed
+        - Not installed
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest sanitized sequence that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Minimal sanitized log excerpt
+      description: Remove ASSRT tokens, credentials, private movie filenames, personal paths, and unsanitized metadata.
+    validations:
+      required: true
+  - type: checkboxes
+    id: sensitive-data
+    attributes:
+      label: Sensitive-data check
+      options:
+        - label: This report contains no ASSRT token, credential, private movie filenames, personal paths, or unsanitized metadata.
+          required: true
