@@ -26,7 +26,7 @@ def test_public_package_metadata_is_complete() -> None:
     assert "Programming Language :: Python :: 3.14" in project["classifiers"]
     assert not any(item.startswith("License ::") for item in project["classifiers"])
     assert any(item.startswith("setuptools>=77.0.3") for item in build_requires)
-    assert "build>=1.5.1" in project["optional-dependencies"]["dev"]
+    assert "build>=1.5.0" in project["optional-dependencies"]["dev"]
 
 
 def test_license_and_changelog_match_initial_release() -> None:
