@@ -162,3 +162,82 @@ def test_issue_forms_are_structured_and_warn_about_sensitive_data() -> None:
     assert "alternatives" in feature.lower()
     assert "blank_issues_enabled: false" in config
     assert "security/advisories/new" in config
+
+
+def _issue_form_fields(form: str) -> dict[str, tuple[str, str]]:
+    """Return field id -> (type, body block) from a GitHub Issue Form."""
+    fields: dict[str, tuple[str, str]] = {}
+    for block in form.split("\n  - type: ")[1:]:
+        field_type, _, body = block.partition("\n")
+        if field_type == "markdown":
+            continue
+        id_line = next(line for line in body.splitlines() if line.startswith("    id: "))
+        field_id = id_line.removeprefix("    id: ")
+        assert field_id not in fields
+        assert "    attributes:\n" in body
+        assert "    validations:\n      required: true" in body
+        fields[field_id] = (field_type, body)
+    return fields
+
+
+def test_community_templates_preserve_enforcement_and_issue_form_contracts() -> None:
+    conduct = _read("CODE_OF_CONDUCT.md")
+    bug = _read(".github/ISSUE_TEMPLATE/bug_report.yml")
+    feature = _read(".github/ISSUE_TEMPLATE/feature_request.yml")
+    config = _read(".github/ISSUE_TEMPLATE/config.yml")
+
+    reporting = "Prefix the report title with `[Conduct]`. Do not include credentials or unrelated personal data."
+    prompt_review = "All complaints will be reviewed and investigated promptly and fairly."
+    privacy = "All community leaders are obligated to respect the privacy and security of the reporter of any incident."
+    assert reporting in conduct
+    assert prompt_review in conduct
+    assert conduct.index(reporting) < conduct.index(prompt_review) < conduct.index(privacy)
+
+    allowed_types = {"checkboxes", "dropdown", "input", "markdown", "textarea"}
+    required_keys = ("name", "description", "title", "labels", "body")
+    forms = {"bug": bug, "feature": feature}
+    for form in forms.values():
+        for key in required_keys:
+            assert any(line.startswith(f"{key}:") for line in form.splitlines())
+        body_types = [block.partition("\n")[0] for block in form.split("\n  - type: ")[1:]]
+        assert set(body_types) <= allowed_types
+        fields = _issue_form_fields(form)
+        assert {field_type for field_type, _ in fields.values()} <= allowed_types - {"markdown"}
+
+    bug_fields = _issue_form_fields(bug)
+    expected_bug_types = {
+        "not-a-vulnerability": "checkboxes",
+        "fixsub-version": "input",
+        "macos-version": "input",
+        "python-version": "input",
+        "install-method": "input",
+        "providers": "input",
+        "ffsubsync": "dropdown",
+        "reproduction": "textarea",
+        "expected": "textarea",
+        "actual": "textarea",
+        "logs": "textarea",
+        "sensitive-data": "checkboxes",
+    }
+    assert {field_id: field_type for field_id, (field_type, _) in bug_fields.items()} == expected_bug_types
+    for field_id in ("not-a-vulnerability", "sensitive-data"):
+        field_type, body = bug_fields[field_id]
+        assert field_type == "checkboxes"
+        assert "      options:\n" in body
+        assert "          required: true" in body
+
+    feature_fields = _issue_form_fields(feature)
+    assert {field_id: field_type for field_id, (field_type, _) in feature_fields.items()} == {
+        "problem": "textarea",
+        "outcome": "textarea",
+        "alternatives": "textarea",
+        "scope": "textarea",
+    }
+
+    assert config.splitlines() == [
+        "blank_issues_enabled: false",
+        "contact_links:",
+        "  - name: Private security report",
+        "    url: https://github.com/IronJKZ/fixsub/security/advisories/new",
+        "    about: Report suspected vulnerabilities privately. Do not open a public issue.",
+    ]

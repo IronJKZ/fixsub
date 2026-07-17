@@ -16,6 +16,8 @@ body:
       options:
         - label: This is not a private vulnerability report.
           required: true
+    validations:
+      required: true
   - type: input
     id: fixsub-version
     attributes:
@@ -91,3 +93,5 @@ body:
       options:
         - label: This report contains no ASSRT token, credential, private movie filenames, personal paths, or unsanitized metadata.
           required: true
+    validations:
+      required: true
