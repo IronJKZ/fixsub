@@ -113,3 +113,19 @@ def test_bilingual_readmes_cover_usage_security_and_development() -> None:
         assert warning in english
         assert warning in chinese
     assert "/Users/" not in english + chinese
+
+
+def test_bilingual_readmes_describe_pipeline_order_and_candidate_limits() -> None:
+    english = _read("README.md")
+    chinese = _read("README.zh-CN.md")
+
+    assert (
+        "asks the enabled providers for results, ranks them, probes and selects the reference audio, "
+        "then downloads, extracts, and normalizes subtitle files."
+    ) in english
+    assert "`--max-candidates` limits the ranked provider results selected for download" in english
+    assert "One downloaded archive can contain multiple subtitle files, so the number of extracted candidates can exceed this value." in english
+
+    assert "向启用的字幕源请求结果、对结果排序、探测并选择参考音轨，然后下载、解压并规范化字幕文件。" in chinese
+    assert "`--max-candidates` 会限制从排序后的字幕源结果中选取用于下载的项目" in chinese
+    assert "一个下载的压缩包可能包含多个字幕文件，因此解压出的候选项数量可能超过该值。" in chinese

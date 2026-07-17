@@ -16,7 +16,7 @@
 
 ## How it works
 
-Run `fixsub` from a folder containing the target movie. The tool detects a supported local video, derives search queries, asks the enabled providers for results, downloads and extracts up to the selected number of candidates, and normalizes subtitle text to UTF-8. It probes the video's audio, rejects non-Chinese candidates, validates and optionally synchronizes candidates, ranks the decisions, backs up any previous final subtitle, and writes `<video_stem>.zh.<ext>` when a suitable result is found.
+Run `fixsub` from a folder containing the target movie. The tool detects a supported local video, derives search queries, asks the enabled providers for results, ranks them, probes and selects the reference audio, then downloads, extracts, and normalizes subtitle files. It rejects non-Chinese candidates, validates and optionally synchronizes candidates, ranks the decisions, backs up any previous final subtitle, and writes `<video_stem>.zh.<ext>` when a suitable result is found.
 
 This is a one-movie-folder workflow. If the folder contains more than one supported video, the largest file is selected; use a dedicated folder when that is not the intended movie.
 
@@ -80,7 +80,7 @@ The default provider set is ASSRT plus SubHD. A final subtitle is written only w
 fixsub --dry-run
 ```
 
-`--dry-run` performs searching, downloading, extraction, probing, validation, and synchronization, and writes `.fixsub/` artifacts, but does not write or replace the final subtitle next to the video. It is the recommended first command for valuable libraries; provider requests and local runtime files still occur.
+`--dry-run` performs searching, probing, downloading, extraction, validation, and synchronization, and writes `.fixsub/` artifacts, but does not write or replace the final subtitle next to the video. It is the recommended first command for valuable libraries; provider requests and local runtime files still occur.
 
 ### Provider selection
 
@@ -107,7 +107,7 @@ fixsub --max-candidates 5
 fixsub --lang zh-Hans
 ```
 
-`--max-candidates` limits downloads after search ranking (the default is `5`), which controls run time and provider traffic. `--lang` controls the final subtitle suffix; the default `zh` produces `<video_stem>.zh.<ext>`, while `zh-Hans` is available when that tag is required by the media library.
+`--max-candidates` limits the ranked provider results selected for download (the default is `5`), which controls run time and provider traffic. One downloaded archive can contain multiple subtitle files, so the number of extracted candidates can exceed this value. `--lang` controls the final subtitle suffix; the default `zh` produces `<video_stem>.zh.<ext>`, while `zh-Hans` is available when that tag is required by the media library.
 
 ### Manual timing adjustment
 
