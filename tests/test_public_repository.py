@@ -241,3 +241,27 @@ def test_community_templates_preserve_enforcement_and_issue_form_contracts() -> 
         "    url: https://github.com/IronJKZ/fixsub/security/advisories/new",
         "    about: Report suspected vulnerabilities privately. Do not open a public issue.",
     ]
+
+
+def test_ci_is_pinned_least_privilege_and_covers_supported_python() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+
+    assert "permissions:\n  contents: read" in workflow
+    assert "macos-15" in workflow
+    assert 'python-version: ["3.11", "3.14"]' in workflow
+    assert "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd" in workflow
+    assert "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405" in workflow
+    assert "python -m pytest -q" in workflow
+    assert "fixsub --help" in workflow
+    assert "python -m build" in workflow
+    assert "ASSRT_TOKEN" not in workflow
+
+
+def test_dependabot_groups_python_and_actions_updates() -> None:
+    dependabot = _read(".github/dependabot.yml")
+
+    assert dependabot.startswith("version: 2\n")
+    assert 'package-ecosystem: "pip"' in dependabot
+    assert 'package-ecosystem: "github-actions"' in dependabot
+    assert dependabot.count('interval: "weekly"') == 2
+    assert dependabot.count("groups:") == 2
