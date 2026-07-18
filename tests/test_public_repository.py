@@ -170,6 +170,23 @@ def test_bilingual_readmes_describe_pipeline_order_and_candidate_limits() -> Non
     assert "一个下载的压缩包可能包含多个字幕文件，因此解压出的候选项数量可能超过该值。" in chinese
 
 
+def test_bilingual_feature_lists_present_automatic_and_manual_sync() -> None:
+    english = _read("README.md")
+    chinese = _read("README.zh-CN.md")
+    english_features = english.split("## Features\n", 1)[1].split("\n## ", 1)[0]
+    chinese_features = chinese.split("## 功能\n", 1)[1].split("\n## ", 1)[0]
+
+    assert "automatically aligns each eligible candidate to the movie audio with `ffsubsync`" in english_features
+    assert "low-quality synchronizations are rejected" in english_features
+    assert "manual whole-timeline adjustment with `fixsub adjust --seconds`" in english_features
+    assert "通过 `ffsubsync` 根据电影音频自动校准每个合格的候选字幕" in chinese_features
+    assert "低质量同步结果会被拒绝" in chinese_features
+    assert "使用 `fixsub adjust --seconds` 手动整体提前或延后字幕" in chinese_features
+
+    assert "By default, it attempts audio-based synchronization with `ffsubsync` for each eligible candidate; `--no-sync` explicitly skips this step." in english
+    assert "默认情况下，它会通过 `ffsubsync` 根据电影音频校准每个合格的候选字幕；`--no-sync` 会明确跳过这一步。" in chinese
+
+
 def test_community_health_files_define_safe_contribution_paths() -> None:
     contributing = _read("CONTRIBUTING.md")
     conduct = _read("CODE_OF_CONDUCT.md")

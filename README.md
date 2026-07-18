@@ -10,13 +10,14 @@
 
 - Searches ASSRT and SubHD for Chinese subtitle candidates for the video in the current folder.
 - Downloads and extracts supported subtitle files, then normalizes them to UTF-8.
-- Uses `ffprobe` to choose a reference audio stream and can validate timing with `ffsubsync`.
+- Uses `ffprobe` to select the reference audio stream, then automatically aligns each eligible candidate to the movie audio with `ffsubsync`; low-quality synchronizations are rejected.
+- Supports manual whole-timeline adjustment with `fixsub adjust --seconds`, including automatic backup and adjustment metadata.
 - Ranks candidates, preserves an existing final subtitle before replacement, and writes an Infuse-compatible Chinese subtitle beside the video.
 - Records runtime artifacts and diagnostics under `.fixsub/` so a run can be inspected afterwards.
 
 ## How it works
 
-Run `fixsub` from a folder containing the target movie. The tool detects a supported local video, derives search queries, asks the enabled providers for results, ranks them, probes and selects the reference audio, then downloads, extracts, and normalizes subtitle files. It rejects non-Chinese candidates, validates and optionally synchronizes candidates, ranks the decisions, backs up any previous final subtitle, and writes `<video_stem>.zh.<ext>` when a suitable result is found.
+Run `fixsub` from a folder containing the target movie. The tool detects a supported local video, derives search queries, asks the enabled providers for results, ranks them, probes and selects the reference audio, then downloads, extracts, and normalizes subtitle files. It rejects non-Chinese candidates. By default, it attempts audio-based synchronization with `ffsubsync` for each eligible candidate; `--no-sync` explicitly skips this step. It ranks the decisions, backs up any previous final subtitle, and writes `<video_stem>.zh.<ext>` when a suitable result is found.
 
 This is a one-movie-folder workflow. If the folder contains more than one supported video, the largest file is selected; use a dedicated folder when that is not the intended movie.
 
