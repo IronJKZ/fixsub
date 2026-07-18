@@ -68,6 +68,13 @@ def test_public_package_metadata_is_complete() -> None:
     assert "build>=1.5.0" in project["optional-dependencies"]["dev"]
 
 
+def test_package_metadata_positions_automatic_subtitle_sync() -> None:
+    project = tomllib.loads(_read("pyproject.toml"))["project"]
+
+    assert project["description"] == "macOS CLI for Chinese subtitle search, automatic audio sync, and Infuse-ready output"
+    assert {"subtitle-sync", "subtitle-synchronization", "ffsubsync", "chinese-subtitles"} <= set(project["keywords"])
+
+
 def test_license_and_changelog_match_initial_release() -> None:
     license_text = _read("LICENSE")
     changelog = _read("CHANGELOG.md")
