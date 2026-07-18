@@ -2,6 +2,11 @@
 
 [English](README.md)
 
+[![CI](https://github.com/IronJKZ/fixsub/actions/workflows/ci.yml/badge.svg)](https://github.com/IronJKZ/fixsub/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/IronJKZ/fixsub)](https://github.com/IronJKZ/fixsub/releases/latest)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 `fixsub` 是一款优先支持 macOS 的命令行工具，用于为本地电影搜索、验证、同步并应用中文字幕。
 
 > 状态：`0.1.0` 是早期公开版本。对重要媒体库操作前，请先使用 `--dry-run`。
@@ -38,15 +43,42 @@
 
 `ffprobe` 由 `ffmpeg` 提供。`unar` 用于处理 `.rar` 和 `.7z` 压缩包；`.zip` 解压为内置能力。`fixsub` 优先支持 macOS，不保证在非 macOS 系统上的兼容性。
 
+## 支持的格式
+
+| 类型 | 格式 |
+| --- | --- |
+| 视频 | `.mkv`、`.mp4`、`.m4v`、`.avi`、`.mov` |
+| 字幕 | `.srt`、`.ass`、`.ssa` |
+| 下载/压缩包 | 直接字幕文件、`.zip`、`.rar`、`.7z` |
+
+直接下载的字幕和 `.zip` 解压不需要 `unar`；解压 `.rar` 和 `.7z` 需要 `unar`。
+
 ## 安装
 
-从源码检出目录以可编辑模式安装：
+### 普通用户安装
+
+克隆仓库，并在虚拟环境中安装 `fixsub`：
+
+```bash
+git clone https://github.com/IronJKZ/fixsub.git
+cd fixsub
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install .
+python3 -m pip install ffsubsync
+```
+
+最后一条命令会安装默认音频同步流程使用的 `ffs` 可执行文件。项目尚未发布 PyPI 包，因此当前需要从源码检出目录安装。
+
+### 贡献者安装
+
+如需运行测试和本地构建包，请使用可编辑的开发环境安装：
 
 ```bash
 python3 -m pip install -e ".[dev]"
 ```
 
-项目未发布 PyPI 包。请安装“系统要求”中的必需 macOS 工具；若要使用基于音频的同步而不是风险更高的 `--no-sync` 模式，请安装 `ffsubsync`。
+贡献流程请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 身份验证
 

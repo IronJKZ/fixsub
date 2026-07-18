@@ -2,6 +2,11 @@
 
 [简体中文](README.zh-CN.md)
 
+[![CI](https://github.com/IronJKZ/fixsub/actions/workflows/ci.yml/badge.svg)](https://github.com/IronJKZ/fixsub/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/IronJKZ/fixsub)](https://github.com/IronJKZ/fixsub/releases/latest)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 `fixsub` is a macOS-first command-line tool that finds, validates, synchronizes, and applies Chinese subtitles for a movie stored in a local folder.
 
 > Status: `0.1.0` is an early public release. Use `--dry-run` first with valuable media libraries.
@@ -38,15 +43,42 @@ This is a one-movie-folder workflow. If the folder contains more than one suppor
 
 `ffprobe` is supplied by `ffmpeg`. `unar` handles `.rar` and `.7z` archives; `.zip` extraction is built in. `fixsub` is macOS-first and does not make non-macOS compatibility guarantees.
 
+## Supported formats
+
+| Kind | Formats |
+| --- | --- |
+| Video | `.mkv`, `.mp4`, `.m4v`, `.avi`, `.mov` |
+| Subtitle | `.srt`, `.ass`, `.ssa` |
+| Download/archive | Direct subtitle files, `.zip`, `.rar`, `.7z` |
+
+Direct subtitle downloads and `.zip` extraction work without `unar`; `.rar` and `.7z` extraction require `unar`.
+
 ## Installation
 
-Install from a source checkout in editable mode:
+### End-user installation
+
+Clone the repository and install `fixsub` in a virtual environment:
+
+```bash
+git clone https://github.com/IronJKZ/fixsub.git
+cd fixsub
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install .
+python3 -m pip install ffsubsync
+```
+
+The final command installs the `ffs` executable used by the default audio-synchronization workflow. No PyPI package is published, so installation currently starts from a source checkout.
+
+### Contributor installation
+
+For tests and local package builds, use an editable development install:
 
 ```bash
 python3 -m pip install -e ".[dev]"
 ```
 
-No PyPI package is published. Install the required macOS tools from the Requirements section, and install `ffsubsync` when you want audio-based synchronization rather than the deliberately riskier `--no-sync` mode.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor workflow.
 
 ## Authentication
 

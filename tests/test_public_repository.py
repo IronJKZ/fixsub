@@ -154,6 +154,40 @@ def test_bilingual_readmes_cover_usage_security_and_development() -> None:
     assert "/Users/" not in english + chinese
 
 
+def test_bilingual_readmes_separate_user_install_and_list_supported_formats() -> None:
+    english = _read("README.md")
+    chinese = _read("README.zh-CN.md")
+
+    for text in (english, chinese):
+        for command in (
+            "git clone https://github.com/IronJKZ/fixsub.git",
+            "python3 -m venv .venv",
+            "python3 -m pip install .",
+            'python3 -m pip install -e ".[dev]"',
+        ):
+            assert command in text
+        for suffix in (".mkv", ".mp4", ".m4v", ".avi", ".mov", ".srt", ".ass", ".ssa", ".zip", ".rar", ".7z"):
+            assert f"`{suffix}`" in text
+
+    assert "## Supported formats" in english
+    assert "## 支持的格式" in chinese
+
+
+def test_bilingual_readmes_show_existing_project_status_badges() -> None:
+    english = _read("README.md")
+    chinese = _read("README.zh-CN.md")
+    badges = (
+        "https://github.com/IronJKZ/fixsub/actions/workflows/ci.yml/badge.svg",
+        "https://img.shields.io/github/v/release/IronJKZ/fixsub",
+        "https://img.shields.io/badge/python-3.11%2B-blue",
+        "https://img.shields.io/badge/License-MIT-yellow.svg",
+    )
+
+    for badge in badges:
+        assert badge in english
+        assert badge in chinese
+
+
 def test_bilingual_readmes_describe_pipeline_order_and_candidate_limits() -> None:
     english = _read("README.md")
     chinese = _read("README.zh-CN.md")
