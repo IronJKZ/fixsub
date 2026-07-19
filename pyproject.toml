@@ -5,12 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fixsub"
 version = "0.1.0"
-description = "On-demand Chinese subtitle search, validation, and sync CLI"
+description = "macOS CLI for Chinese subtitle search, automatic audio sync, and Infuse-ready output"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["subtitles", "subtitle-sync", "macos", "ffmpeg", "infuse"]
+keywords = [
+  "subtitles",
+  "subtitle-sync",
+  "subtitle-synchronization",
+  "ffsubsync",
+  "chinese-subtitles",
+  "macos",
+  "ffmpeg",
+  "infuse",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

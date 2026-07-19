@@ -68,6 +68,13 @@ def test_public_package_metadata_is_complete() -> None:
     assert "build>=1.5.0" in project["optional-dependencies"]["dev"]
 
 
+def test_package_metadata_positions_automatic_subtitle_sync() -> None:
+    project = tomllib.loads(_read("pyproject.toml"))["project"]
+
+    assert project["description"] == "macOS CLI for Chinese subtitle search, automatic audio sync, and Infuse-ready output"
+    assert {"subtitle-sync", "subtitle-synchronization", "ffsubsync", "chinese-subtitles"} <= set(project["keywords"])
+
+
 def test_license_and_changelog_match_initial_release() -> None:
     license_text = _read("LICENSE")
     changelog = _read("CHANGELOG.md")
@@ -154,6 +161,40 @@ def test_bilingual_readmes_cover_usage_security_and_development() -> None:
     assert "/Users/" not in english + chinese
 
 
+def test_bilingual_readmes_separate_user_install_and_list_supported_formats() -> None:
+    english = _read("README.md")
+    chinese = _read("README.zh-CN.md")
+
+    for text in (english, chinese):
+        for command in (
+            "git clone https://github.com/IronJKZ/fixsub.git",
+            "python3 -m venv .venv",
+            "python3 -m pip install .",
+            'python3 -m pip install -e ".[dev]"',
+        ):
+            assert command in text
+        for suffix in (".mkv", ".mp4", ".m4v", ".avi", ".mov", ".srt", ".ass", ".ssa", ".zip", ".rar", ".7z"):
+            assert f"`{suffix}`" in text
+
+    assert "## Supported formats" in english
+    assert "## 支持的格式" in chinese
+
+
+def test_bilingual_readmes_show_existing_project_status_badges() -> None:
+    english = _read("README.md")
+    chinese = _read("README.zh-CN.md")
+    badges = (
+        "https://github.com/IronJKZ/fixsub/actions/workflows/ci.yml/badge.svg",
+        "https://img.shields.io/github/v/release/IronJKZ/fixsub",
+        "https://img.shields.io/badge/python-3.11%2B-blue",
+        "https://img.shields.io/badge/License-MIT-yellow.svg",
+    )
+
+    for badge in badges:
+        assert badge in english
+        assert badge in chinese
+
+
 def test_bilingual_readmes_describe_pipeline_order_and_candidate_limits() -> None:
     english = _read("README.md")
     chinese = _read("README.zh-CN.md")
@@ -168,6 +209,23 @@ def test_bilingual_readmes_describe_pipeline_order_and_candidate_limits() -> Non
     assert "向启用的字幕源请求结果、对结果排序、探测并选择参考音轨，然后下载、解压并规范化字幕文件。" in chinese
     assert "`--max-candidates` 会限制从排序后的字幕源结果中选取用于下载的项目" in chinese
     assert "一个下载的压缩包可能包含多个字幕文件，因此解压出的候选项数量可能超过该值。" in chinese
+
+
+def test_bilingual_feature_lists_present_automatic_and_manual_sync() -> None:
+    english = _read("README.md")
+    chinese = _read("README.zh-CN.md")
+    english_features = english.split("## Features\n", 1)[1].split("\n## ", 1)[0]
+    chinese_features = chinese.split("## 功能\n", 1)[1].split("\n## ", 1)[0]
+
+    assert "automatically aligns each eligible candidate to the movie audio with `ffsubsync`" in english_features
+    assert "low-quality synchronizations are rejected" in english_features
+    assert "manual whole-timeline adjustment with `fixsub adjust --seconds`" in english_features
+    assert "通过 `ffsubsync` 根据电影音频自动校准每个合格的候选字幕" in chinese_features
+    assert "低质量同步结果会被拒绝" in chinese_features
+    assert "使用 `fixsub adjust --seconds` 手动整体提前或延后字幕" in chinese_features
+
+    assert "By default, it attempts audio-based synchronization with `ffsubsync` for each eligible candidate; `--no-sync` explicitly skips this step." in english
+    assert "默认情况下，它会通过 `ffsubsync` 根据电影音频校准每个合格的候选字幕；`--no-sync` 会明确跳过这一步。" in chinese
 
 
 def test_community_health_files_define_safe_contribution_paths() -> None:
