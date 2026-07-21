@@ -257,6 +257,36 @@ class SubhdClient:
             source_url=str(response.request.url),
         )
 
+    def _prepare_download_url(self, result: SearchResult, detail_url: str) -> str:
+        prepare_url = f"{self.base_url}/api/sub/prepare-download"
+        response = self._request_stage(
+            "POST",
+            prepare_url,
+            "SubHD download preparation request failed",
+            json={"sid": result.result_id},
+            headers={"Referer": detail_url},
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise FixsubError("SubHD download preparation returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise FixsubError("SubHD download preparation returned invalid JSON")
+        if payload.get("success") is not True:
+            message = _sanitize_rejection_message(payload.get("msg"))
+            raise FixsubError(f"SubHD download preparation rejected the request: {message}")
+        prepared_url = payload.get("url")
+        if not isinstance(prepared_url, str) or not prepared_url.strip():
+            raise FixsubError("SubHD download preparation omitted a prepared download URL")
+        resolved_url = urljoin(prepare_url, prepared_url.strip())
+        if not _is_allowed_subhd_url(resolved_url, self.base_url):
+            raise FixsubError(f"SubHD prepared download URL is not allowed: {resolved_url}")
+        parsed = urlparse(resolved_url)
+        expected_path = f"/down/{quote(result.result_id, safe='')}"
+        if parsed.path != expected_path or parsed.query or parsed.fragment:
+            raise FixsubError(f"SubHD prepared download URL does not match subtitle: {resolved_url}")
+        return resolved_url
+
     def _api_download_url(self, result: SearchResult, gate_url: str) -> str:
         api_url = f"{self.base_url}/api/sub/down"
         response = self._request_stage(
@@ -285,9 +315,9 @@ class SubhdClient:
 
     def download(self, result: SearchResult, target_dir) -> DownloadedFile:
         detail_url = result.detail_url or f"{self.base_url}/a/{result.result_id}"
-        detail_response = self._request_stage("GET", detail_url, "SubHD detail request failed")
+        self._request_stage("GET", detail_url, "SubHD detail request failed")
 
-        gate_url = result.download_url or f"{self.base_url}/down/{result.result_id}"
+        gate_url = self._prepare_download_url(result, detail_url)
         gate_response = self._request_stage(
             "GET",
             gate_url,
