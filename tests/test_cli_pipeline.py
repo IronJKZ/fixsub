@@ -298,8 +298,177 @@ def test_cli_runs_dry_run_pipeline(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "Selected reference audio: a:0" in result.output
-    assert "Dry run complete. Best candidate: assrt_1001 (synced, timeline 1.00)." in result.output
+    assert "Dry run complete. best candidate: assrt_1001 (synchronization, timeline 1.00)." in result.output
     assert (tmp_path / ".fixsub" / "metadata" / "results.json").exists()
+
+
+def test_cli_applies_forced_low_confidence_synced_candidate(tmp_path: Path, monkeypatch) -> None:
+    video = _write_video(tmp_path)
+    subtitle = tmp_path / ".fixsub" / "candidates" / "subhd_forced.srt"
+    subtitle.parent.mkdir(parents=True)
+    subtitle.write_text("1\n00:00:01,000 --> 00:00:02,000\n字幕\n", encoding="utf-8")
+    synced = tmp_path / ".fixsub" / "synced" / "subhd_forced.synced.srt"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ASSRT_TOKEN", raising=False)
+
+    class FakeSubhdClient:
+        def search(self, query: str) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    provider="subhd",
+                    result_id="forced",
+                    title="Movie 1992 中文字幕",
+                    language="zh-Hans",
+                    format="srt",
+                )
+            ]
+
+        def download(self, result: SearchResult, target_dir: Path) -> DownloadedFile:
+            return DownloadedFile("subhd_forced", "subhd", subtitle, result.download_url)
+
+    monkeypatch.setattr("fixsub.providers.registry.SubhdClient", FakeSubhdClient)
+    monkeypatch.setattr("fixsub.cli.extract_archive", lambda path, out_dir: [subtitle])
+    monkeypatch.setattr("fixsub.cli.normalize_to_utf8", lambda source, target: target)
+    monkeypatch.setattr(
+        "fixsub.cli.probe_video",
+        lambda path: ProbeResult(7200, [AudioStream(1, 0, "ac3", "eng", 6, True)], {}),
+    )
+    monkeypatch.setattr("fixsub.cli.score_alignment", lambda path, duration: AlignmentScore(0.40, ["low timeline coverage"]))
+
+    def fake_sync(video_path: Path, subtitle_path: Path, output_path: Path, audio_stream: str) -> SyncResult:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(subtitle_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return SyncResult(
+            attempted=True,
+            succeeded=True,
+            output_path=output_path,
+            ffsubsync_score=12.0,
+            offset_seconds=8.4,
+            framerate_scale=1.0,
+            forced_low_quality=True,
+        )
+
+    monkeypatch.setattr("fixsub.cli.run_ffsubsync", fake_sync)
+
+    result = CliRunner().invoke(app, ["--providers", "subhd"])
+
+    final_path = video.with_name(f"{video.stem}.zh.srt")
+    assert result.exit_code == 0
+    assert final_path.exists()
+    assert "Applied low-confidence subtitle" in result.output
+    assert "forced synchronization" in result.output
+    metadata = _read_metadata(tmp_path)
+    assert metadata["final_output"] == str(final_path)
+    assert metadata["decisions"][0]["is_poor"] is True
+    assert metadata["decisions"][0]["sync_result"]["forced_low_quality"] is True
+
+
+def test_cli_applies_original_when_sync_fails(tmp_path: Path, monkeypatch) -> None:
+    video = _write_video(tmp_path)
+    subtitle = tmp_path / ".fixsub" / "candidates" / "subhd_fallback.srt"
+    subtitle.parent.mkdir(parents=True)
+    subtitle.write_text("1\n00:00:01,000 --> 00:00:02,000\n字幕\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ASSRT_TOKEN", raising=False)
+
+    class FakeSubhdClient:
+        def search(self, query: str) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    provider="subhd",
+                    result_id="fallback",
+                    title="Movie 1992 中文字幕",
+                    language="zh-Hans",
+                    format="srt",
+                )
+            ]
+
+        def download(self, result: SearchResult, target_dir: Path) -> DownloadedFile:
+            return DownloadedFile("subhd_fallback", "subhd", subtitle, result.download_url)
+
+    monkeypatch.setattr("fixsub.providers.registry.SubhdClient", FakeSubhdClient)
+    monkeypatch.setattr("fixsub.cli.extract_archive", lambda path, out_dir: [subtitle])
+    monkeypatch.setattr("fixsub.cli.normalize_to_utf8", lambda source, target: target)
+    monkeypatch.setattr(
+        "fixsub.cli.probe_video",
+        lambda path: ProbeResult(7200, [AudioStream(1, 0, "ac3", "eng", 6, True)], {}),
+    )
+    monkeypatch.setattr("fixsub.cli.score_alignment", lambda path, duration: AlignmentScore(0.40, ["low timeline coverage"]))
+    monkeypatch.setattr(
+        "fixsub.cli.run_ffsubsync",
+        lambda video_path, subtitle_path, output_path, audio_stream: SyncResult(
+            attempted=True,
+            succeeded=False,
+            error="sync failed",
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["--providers", "subhd"])
+
+    final_path = video.with_name(f"{video.stem}.zh.srt")
+    assert result.exit_code == 0
+    assert final_path.exists()
+    assert final_path.read_text(encoding="utf-8") == subtitle.read_text(encoding="utf-8")
+    assert "Applied low-confidence subtitle" in result.output
+    assert "original fallback" in result.output
+    assert _read_metadata(tmp_path)["final_output"] == str(final_path)
+
+
+def test_cli_dry_run_reports_forced_low_confidence_without_writing(tmp_path: Path, monkeypatch) -> None:
+    video = _write_video(tmp_path)
+    subtitle = tmp_path / ".fixsub" / "candidates" / "subhd_forced.srt"
+    subtitle.parent.mkdir(parents=True)
+    subtitle.write_text("1\n00:00:01,000 --> 00:00:02,000\n字幕\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ASSRT_TOKEN", raising=False)
+
+    class FakeSubhdClient:
+        def search(self, query: str) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    provider="subhd",
+                    result_id="forced",
+                    title="Movie 1992 中文字幕",
+                    language="zh-Hans",
+                    format="srt",
+                )
+            ]
+
+        def download(self, result: SearchResult, target_dir: Path) -> DownloadedFile:
+            return DownloadedFile("subhd_forced", "subhd", subtitle, result.download_url)
+
+    monkeypatch.setattr("fixsub.providers.registry.SubhdClient", FakeSubhdClient)
+    monkeypatch.setattr("fixsub.cli.extract_archive", lambda path, out_dir: [subtitle])
+    monkeypatch.setattr("fixsub.cli.normalize_to_utf8", lambda source, target: target)
+    monkeypatch.setattr(
+        "fixsub.cli.probe_video",
+        lambda path: ProbeResult(7200, [AudioStream(1, 0, "ac3", "eng", 6, True)], {}),
+    )
+    monkeypatch.setattr("fixsub.cli.score_alignment", lambda path, duration: AlignmentScore(0.40, ["low timeline coverage"]))
+
+    def fake_sync(video_path: Path, subtitle_path: Path, output_path: Path, audio_stream: str) -> SyncResult:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(subtitle_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return SyncResult(
+            attempted=True,
+            succeeded=True,
+            output_path=output_path,
+            ffsubsync_score=12.0,
+            offset_seconds=8.4,
+            framerate_scale=1.0,
+            forced_low_quality=True,
+        )
+
+    monkeypatch.setattr("fixsub.cli.run_ffsubsync", fake_sync)
+
+    result = CliRunner().invoke(app, ["--dry-run", "--providers", "subhd"])
+
+    assert result.exit_code == 0
+    assert "Dry run complete" in result.output
+    assert "low-confidence" in result.output.lower()
+    assert "forced synchronization" in result.output
+    assert not video.with_name(f"{video.stem}.zh.srt").exists()
+    assert _read_metadata(tmp_path)["final_output"] is None
 
 
 def test_cli_writes_metadata_when_token_is_missing_after_video_detection(tmp_path: Path, monkeypatch) -> None:

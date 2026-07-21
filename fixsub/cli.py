@@ -149,6 +149,16 @@ def _decide_candidates(
     return decisions
 
 
+def _selection_label(decision: CandidateDecision) -> str:
+    if decision.sync_result.forced_low_quality and decision.selected_version == "synced":
+        return "forced synchronization"
+    if decision.selected_version == "original" and decision.sync_result.attempted:
+        return "original fallback"
+    if decision.selected_version == "synced":
+        return "synchronization"
+    return "original subtitle"
+
+
 def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
     workdirs = create_workdirs(base_dir)
     log_path = workdirs.logs / "fixsub.log"
@@ -236,17 +246,23 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
 
     ranked_decisions = rank_decisions(decisions)
     best = ranked_decisions[0]
+    selection_label = _selection_label(best)
     final_output = None
-    if best.is_poor:
-        message = "No high-confidence subtitle found. Inspect candidates in .fixsub/candidates."
-    elif options.dry_run:
+    if options.dry_run:
+        confidence = "Low-confidence " if best.is_poor else ""
         message = (
-            f"Dry run complete. Best candidate: {best.candidate.candidate_id} "
-            f"({best.selected_version}, timeline {best.selected_score:.2f})."
+            f"Dry run complete. {confidence}best candidate: {best.candidate.candidate_id} "
+            f"({selection_label}, timeline {best.selected_score:.2f})."
         )
     else:
         final_output = write_final_subtitle(best.selected_path, video_path, options.lang, workdirs.original)
-        message = f"Applied subtitle: {final_output}"
+        if best.is_poor:
+            message = (
+                f"Applied low-confidence subtitle ({selection_label}, timeline {best.selected_score:.2f}): "
+                f"{final_output}"
+            )
+        else:
+            message = f"Applied subtitle: {final_output}"
 
     metadata = _write_pipeline_metadata(
         metadata_path,
