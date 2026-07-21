@@ -12,7 +12,12 @@ def decide_candidate_version(
     synced_score: AlignmentScore | None,
 ) -> CandidateDecision:
     synced_output_exists = sync_result.output_path is not None and sync_result.output_path.exists()
-    synced_is_usable = sync_result.succeeded and synced_score is not None and synced_output_exists
+    synced_is_usable = (
+        sync_result.succeeded
+        and synced_score is not None
+        and synced_score.has_parseable_intervals
+        and synced_output_exists
+    )
     if synced_is_usable:
         selected_version = "synced"
         selected_path = sync_result.output_path
@@ -31,6 +36,8 @@ def decide_candidate_version(
             reason = "Synced output missing; original candidate kept."
         elif sync_result.attempted and synced_score is None:
             reason = "Synced score missing; original candidate kept."
+        elif sync_result.attempted and not synced_score.has_parseable_intervals:
+            reason = "Synced output has no parseable subtitle intervals; original candidate kept."
         elif sync_result.attempted:
             reason = "ffsubsync validation did not produce a usable synced subtitle."
         else:

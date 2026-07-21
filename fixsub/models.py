@@ -151,6 +151,7 @@ class SubtitleCandidate:
 class AlignmentScore:
     score: float
     reasons: list[str]
+    has_parseable_intervals: bool = True
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)

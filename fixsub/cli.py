@@ -135,6 +135,8 @@ def _decide_candidates(
     decisions: list[CandidateDecision] = []
     for candidate in candidates:
         original_score = score_alignment(candidate.subtitle_path, duration_seconds)
+        if not original_score.has_parseable_intervals:
+            continue
         sync_result = SyncResult(attempted=False, succeeded=False)
         synced_score = None
         if not no_sync:
@@ -157,6 +159,22 @@ def _selection_label(decision: CandidateDecision) -> str:
     if decision.selected_version == "synced":
         return "synchronization"
     return "original subtitle"
+
+
+def _format_selection_outcome(
+    decision: CandidateDecision,
+    *,
+    dry_run: bool,
+    final_output: Path | None = None,
+) -> str:
+    confidence = "low-confidence" if decision.is_poor else "high-confidence"
+    details = f"({_selection_label(decision)}, timeline {decision.selected_score:.2f})"
+    if dry_run:
+        return (
+            f"Dry run complete. {confidence.capitalize()} candidate "
+            f"{decision.candidate.candidate_id} selected {details}."
+        )
+    return f"Applied {confidence} candidate {decision.candidate.candidate_id} {details}: {final_output}"
 
 
 def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
@@ -246,23 +264,12 @@ def run_pipeline(base_dir: Path, options: RunOptions) -> dict[str, object]:
 
     ranked_decisions = rank_decisions(decisions)
     best = ranked_decisions[0]
-    selection_label = _selection_label(best)
     final_output = None
     if options.dry_run:
-        confidence = "Low-confidence " if best.is_poor else ""
-        message = (
-            f"Dry run complete. {confidence}best candidate: {best.candidate.candidate_id} "
-            f"({selection_label}, timeline {best.selected_score:.2f})."
-        )
+        message = _format_selection_outcome(best, dry_run=True)
     else:
         final_output = write_final_subtitle(best.selected_path, video_path, options.lang, workdirs.original)
-        if best.is_poor:
-            message = (
-                f"Applied low-confidence subtitle ({selection_label}, timeline {best.selected_score:.2f}): "
-                f"{final_output}"
-            )
-        else:
-            message = f"Applied subtitle: {final_output}"
+        message = _format_selection_outcome(best, dry_run=False, final_output=final_output)
 
     metadata = _write_pipeline_metadata(
         metadata_path,
