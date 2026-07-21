@@ -17,7 +17,10 @@ def decide_candidate_version(
         selected_version = "synced"
         selected_path = sync_result.output_path
         selected_score = synced_score.score
-        reason = "ffsubsync audio alignment succeeded."
+        if sync_result.forced_low_quality:
+            reason = "ffsubsync forced a low-quality audio alignment."
+        else:
+            reason = "ffsubsync audio alignment succeeded."
     else:
         selected_version = "original"
         selected_path = candidate.subtitle_path
@@ -33,7 +36,11 @@ def decide_candidate_version(
         else:
             reason = "Audio validation explicitly skipped; original candidate kept."
     usable_score = synced_score.score if selected_version == "synced" and synced_score is not None else original_score.score
-    is_poor = usable_score < POOR_ALIGNMENT or (sync_result.attempted and not synced_is_usable)
+    is_poor = (
+        sync_result.forced_low_quality
+        or usable_score < POOR_ALIGNMENT
+        or (sync_result.attempted and not synced_is_usable)
+    )
     return CandidateDecision(
         candidate=candidate,
         original_score=original_score,
