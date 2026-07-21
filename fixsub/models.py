@@ -151,6 +151,7 @@ class SubtitleCandidate:
 class AlignmentScore:
     score: float
     reasons: list[str]
+    has_parseable_intervals: bool = True
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -165,6 +166,7 @@ class SyncResult:
     ffsubsync_score: float | None = None
     offset_seconds: float | None = None
     framerate_scale: float | None = None
+    forced_low_quality: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return _path_to_str(asdict(self))

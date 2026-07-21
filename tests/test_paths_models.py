@@ -123,6 +123,7 @@ def test_candidate_decision_serialization_converts_nested_paths(tmp_path: Path) 
     json.dumps(data)
     assert data["candidate"]["subtitle_path"].endswith("movie.ass")
     assert data["sync_result"]["output_path"].endswith("movie.synced.ass")
+    assert data["sync_result"]["forced_low_quality"] is False
     assert data["selected_path"].endswith("movie.synced.ass")
 
 

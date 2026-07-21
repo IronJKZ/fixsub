@@ -14,7 +14,11 @@ def score_alignment(subtitle_path: Path, duration_seconds: float | None) -> Alig
     reasons: list[str] = []
     intervals = parse_subtitle_intervals(subtitle_path)
     if not intervals:
-        return AlignmentScore(score=0.0, reasons=["no parseable subtitle intervals"])
+        return AlignmentScore(
+            score=0.0,
+            reasons=["no parseable subtitle intervals"],
+            has_parseable_intervals=False,
+        )
     valid_intervals = [(start, end) for start, end in intervals if start >= 0 and end > start]
     valid_rate = len(valid_intervals) / len(intervals)
     if valid_rate < 1.0:

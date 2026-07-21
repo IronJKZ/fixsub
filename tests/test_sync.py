@@ -115,23 +115,18 @@ def test_run_ffsubsync_success_uses_expected_command_and_creates_parent(
     )
 
 
-def test_run_ffsubsync_rejects_zero_exit_low_quality_result(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_ffsubsync_retries_low_quality_without_skip_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("fixsub.sync.shutil.which", lambda command: "/usr/bin/ffs")
     output = tmp_path / "synced" / "candidate.srt"
+    calls: list[list[str]] = []
 
     def fake_run(command: list[str], capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
-        output.write_text("original subtitle", encoding="utf-8")
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=(
-                "score: 305917.769\n"
-                "offset seconds: 31.730\n"
-                "framerate scale factor: 1.043\n"
-                "low-quality alignment; leaving subtitles unmodified\n"
-            ),
-            stderr="",
-        )
+        calls.append(command)
+        output.write_text("forced subtitle", encoding="utf-8")
+        diagnostics = "score: 12.0\noffset seconds: 31.730\nframerate scale factor: 1.043\n"
+        if "--skip-sync-on-low-quality" in command:
+            diagnostics += "low-quality alignment; leaving subtitles unmodified\n"
+        return subprocess.CompletedProcess(command, 0, stdout=diagnostics, stderr="")
 
     monkeypatch.setattr("fixsub.sync.subprocess.run", fake_run)
 
@@ -142,10 +137,46 @@ def test_run_ffsubsync_rejects_zero_exit_low_quality_result(monkeypatch: pytest.
         audio_stream="a:4",
     )
 
-    assert result.succeeded is False
-    assert result.error == "ffsubsync rejected a low-quality alignment"
+    assert len(calls) == 2
+    assert "--skip-sync-on-low-quality" in calls[0]
+    assert "--skip-sync-on-low-quality" not in calls[1]
+    assert result.succeeded is True
+    assert result.output_path == output
+    assert result.forced_low_quality is True
     assert result.offset_seconds == 31.73
-    assert result.framerate_scale == 1.043
+
+
+def test_run_ffsubsync_forced_retry_failure_removes_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("fixsub.sync.shutil.which", lambda command: "/usr/bin/ffs")
+    output = tmp_path / "synced" / "candidate.srt"
+    calls = 0
+
+    def fake_run(command: list[str], capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        output.write_text("temporary", encoding="utf-8")
+        if calls == 1:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=(
+                    "score: 12.0\noffset seconds: 3.0\nframerate scale factor: 1.0\n"
+                    "low-quality alignment; leaving subtitles unmodified\n"
+                ),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(command, 2, stdout="", stderr="forced failure")
+
+    monkeypatch.setattr("fixsub.sync.subprocess.run", fake_run)
+
+    result = run_ffsubsync(tmp_path / "movie.mkv", tmp_path / "candidate.srt", output, "a:0")
+
+    assert calls == 2
+    assert result.succeeded is False
+    assert result.error == "forced failure"
+    assert result.forced_low_quality is True
     assert not output.exists()
 
 

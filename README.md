@@ -105,7 +105,7 @@ From a folder containing a movie, run:
 fixsub
 ```
 
-The default provider set is ASSRT plus SubHD. A final subtitle is written only when the selected candidate is not poor; otherwise inspect the saved candidates and diagnostics.
+The default provider set is ASSRT plus SubHD. When at least one usable Chinese candidate exists, `fixsub` writes the highest-ranked candidate and records its confidence and selection outcome in the console and metadata.
 
 ### Safe preview
 
@@ -122,7 +122,7 @@ fixsub --providers subhd
 fixsub --providers assrt,subhd
 ```
 
-Use `fixsub --providers subhd` to avoid ASSRT credentials. Use `fixsub --providers assrt,subhd` to explicitly select both providers (also the default). Provider search or download failures are logged and the run can continue with other available providers, but provider outages can leave no usable candidate.
+Use `fixsub --providers subhd` to avoid ASSRT credentials. Use `fixsub --providers assrt,subhd` to explicitly select both providers (also the default). SubHD downloads use its prepared-download flow before fetching the final file. Provider search or download failures are logged and the run can continue with other available providers, but provider outages can leave no usable candidate.
 
 ### Audio and synchronization
 
@@ -131,7 +131,9 @@ fixsub --audio a:0
 fixsub --no-sync
 ```
 
-By default, `fixsub` probes audio with `ffprobe`, selects a reference stream, and tries `ffsubsync` for each candidate. `fixsub --audio a:0` forces the stream passed to `ffsubsync`. `fixsub --no-sync` skips audio synchronization and ranks original candidates only; use it only when necessary because structural timestamp checks cannot establish dialogue or audio alignment. A failed or low-quality synchronization makes a candidate poor and prevents automatic application.
+By default, `fixsub` probes audio with `ffprobe`, selects a reference stream, and tries `ffsubsync` for each candidate. `fixsub --audio a:0` forces the stream passed to `ffsubsync`. `fixsub --no-sync` skips audio synchronization and ranks original candidates only; use it only when necessary because structural timestamp checks cannot establish dialogue or audio alignment.
+
+`fixsub` first asks `ffsubsync` to skip low-quality alignments. If that conservative pass explicitly refuses the alignment, `fixsub` retries once in forced mode. When at least one usable Chinese candidate exists, the best candidate is written even if confidence remains low; the console and metadata identify forced synchronization or original fallback. A hard stop remains when no candidate can be downloaded, extracted, parsed, or accepted as Chinese.
 
 ### Candidate and language controls
 
@@ -188,8 +190,8 @@ Before opening an issue, remove `.fixsub/logs/fixsub.log`, `.fixsub/metadata/res
 - **A `.rar` or `.7z` archive cannot be extracted:** install archive support with `brew install unar` and retry. `.zip` files do not need `unar`.
 - **ASSRT reports missing credentials:** run `fixsub auth set`, check `fixsub auth status`, or set a temporary `ASSRT_TOKEN`. Use `fixsub --providers subhd` if you do not intend to use ASSRT.
 - **A provider is unavailable or no candidate is found:** retry later, select another provider, and inspect `.fixsub/logs/fixsub.log`; provider results and downloads can change independently of the tool.
-- **Candidates are rejected as low confidence:** inspect `.fixsub/candidates/` and `.fixsub/metadata/results.json`. Low structural timing scores or failed synchronization intentionally prevent automatic output.
-- **Synchronization fails:** install `ffsubsync`, confirm `ffprobe` can read the video, choose the correct stream with `fixsub --audio a:0`, and inspect the log. `fixsub --no-sync` is available only as a manual-risk fallback.
+- **A low-confidence subtitle is applied:** inspect `.fixsub/candidates/`, `.fixsub/synced/`, and `.fixsub/metadata/results.json`. The console and metadata identify whether it used forced synchronization or the original fallback.
+- **Synchronization fails:** install `ffsubsync`, confirm `ffprobe` can read the video, choose the correct stream with `fixsub --audio a:0`, and inspect the log. `fixsub` ranks and applies the original fallback when it remains the best usable candidate.
 
 ## Development
 

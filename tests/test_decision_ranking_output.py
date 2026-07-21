@@ -56,6 +56,29 @@ def test_decision_selects_audio_validated_sync_even_when_original_timeline_is_ex
     assert decision.decision_reason == "ffsubsync audio alignment succeeded."
 
 
+def test_decision_selects_forced_sync_and_marks_it_low_confidence(tmp_path: Path) -> None:
+    candidate = make_candidate(tmp_path)
+    synced = tmp_path / "candidate.synced.ass"
+    synced.write_text("[Events]\n", encoding="utf-8")
+
+    decision = decide_candidate_version(
+        candidate=candidate,
+        original_score=AlignmentScore(0.90, []),
+        sync_result=SyncResult(
+            attempted=True,
+            succeeded=True,
+            output_path=synced,
+            forced_low_quality=True,
+        ),
+        synced_score=AlignmentScore(0.90, []),
+    )
+
+    assert decision.selected_version == "synced"
+    assert decision.selected_path == synced
+    assert decision.is_poor is True
+    assert decision.decision_reason == "ffsubsync forced a low-quality audio alignment."
+
+
 def test_decision_selects_synced_at_exact_improvement_threshold(tmp_path: Path) -> None:
     candidate = make_candidate(tmp_path)
     synced = tmp_path / "candidate.synced.ass"

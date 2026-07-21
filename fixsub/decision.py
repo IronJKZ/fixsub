@@ -12,12 +12,20 @@ def decide_candidate_version(
     synced_score: AlignmentScore | None,
 ) -> CandidateDecision:
     synced_output_exists = sync_result.output_path is not None and sync_result.output_path.exists()
-    synced_is_usable = sync_result.succeeded and synced_score is not None and synced_output_exists
+    synced_is_usable = (
+        sync_result.succeeded
+        and synced_score is not None
+        and synced_score.has_parseable_intervals
+        and synced_output_exists
+    )
     if synced_is_usable:
         selected_version = "synced"
         selected_path = sync_result.output_path
         selected_score = synced_score.score
-        reason = "ffsubsync audio alignment succeeded."
+        if sync_result.forced_low_quality:
+            reason = "ffsubsync forced a low-quality audio alignment."
+        else:
+            reason = "ffsubsync audio alignment succeeded."
     else:
         selected_version = "original"
         selected_path = candidate.subtitle_path
@@ -28,12 +36,18 @@ def decide_candidate_version(
             reason = "Synced output missing; original candidate kept."
         elif sync_result.attempted and synced_score is None:
             reason = "Synced score missing; original candidate kept."
+        elif sync_result.attempted and not synced_score.has_parseable_intervals:
+            reason = "Synced output has no parseable subtitle intervals; original candidate kept."
         elif sync_result.attempted:
             reason = "ffsubsync validation did not produce a usable synced subtitle."
         else:
             reason = "Audio validation explicitly skipped; original candidate kept."
     usable_score = synced_score.score if selected_version == "synced" and synced_score is not None else original_score.score
-    is_poor = usable_score < POOR_ALIGNMENT or (sync_result.attempted and not synced_is_usable)
+    is_poor = (
+        sync_result.forced_low_quality
+        or usable_score < POOR_ALIGNMENT
+        or (sync_result.attempted and not synced_is_usable)
+    )
     return CandidateDecision(
         candidate=candidate,
         original_score=original_score,
